@@ -25,7 +25,7 @@ library(wordcloud2)
 library(tidyr)
 library(visNetwork)
 library(readr)
-library(officer) # <- NUEVA LIBRERÍA PARA EXPORTAR A WORD
+library(officer) 
 
 # ==============================================================================
 # FUNCIONES DE LECTURA ROBUSTA
@@ -71,7 +71,6 @@ leer_csv_robusto <- function(ruta) {
   names(df) <- gsub("^ï»¿", "", names(df))
   names(df) <- gsub('^"|"$', "", names(df))
   
-  # Forzar que la columna se llame ID si viene con algún espacio raro
   idx_id <- grep("^ID$", toupper(trimws(names(df))))
   if(length(idx_id) > 0) names(df)[idx_id[1]] <- "ID"
   
@@ -84,11 +83,8 @@ leer_csv_robusto <- function(ruta) {
   return(df)
 }
 
-# GENERADOR AUTOMÁTICO DE IDs FALTANTES (Ancla del Sistema)
 fill_missing_ids <- function(df, df_ref = NULL) {
   if (!"ID" %in% names(df)) df$ID <- NA_character_
-  
-  # Forzar a numérico internamente para encontrar el máximo
   ids_numericos <- suppressWarnings(as.numeric(df$ID))
   idx_na <- which(is.na(ids_numericos))
   
@@ -99,13 +95,9 @@ fill_missing_ids <- function(df, df_ref = NULL) {
     }
     max_df <- max(c(0, ids_numericos), na.rm = TRUE)
     max_tot <- max(max_ref, max_df)
-    
     df$ID[idx_na] <- as.character(seq(max_tot + 1, max_tot + length(idx_na)))
   }
-  
-  # Mover ID a la primera columna siempre
   df <- df %>% relocate(ID)
-  # Asegurar que sea tratado como texto de forma consistente en cruces
   df$ID <- as.character(df$ID) 
   return(df)
 }
@@ -195,7 +187,6 @@ ui <- page_sidebar(
                     column(6, actionButton("save_question_btn", "Guardar Variable", class = "btn-success", width = "100%", icon = icon("save")))
                   )
                 ))),
-                # AQUI AGREGAMOS EL BOTÓN DE EXPORTACIÓN A WORD
                 column(7, card(card_header("2. Diccionario de Variables Actual", class = "bg-info text-white"), card_body(
                   downloadButton("export_word_dict_btn", "Exportar a Word", class = "btn-secondary mb-3", icon = icon("file-word")),
                   DTOutput("questions_set_tbl")
@@ -223,21 +214,46 @@ ui <- page_sidebar(
                   selectInput("viz_mode", "Seleccionar Gráfico:", 
                               choices = c("1. Nube de Palabras Global" = "wordcloud", "2. Nube de Palabras Únicas (Muerte Cruzada)" = "wordcloud_unique",
                                           "3. Flujo Dinámico de Relaciones (Sankey)" = "sankey", "4. Gráfico de Frecuencias" = "freq", "5. Red Plan vs Actores" = "network")), hr(),
+                  
+                  # Filtros de Texto / NLP (AÑADIDOS FILTROS DE VERBOS)
                   conditionalPanel(condition = "input.viz_mode == 'wordcloud' || input.viz_mode == 'wordcloud_unique'",
-                                   h6("Filtros NLP"), textInput("custom_stopwords", "Excluir palabras:", value = "para, el, la,esta,busca,medida,estos,este,sobre,tiene,estas,asimismo,entre,través,manera, los, las, con, de, en, del, a, y, o, por, se, su, sus, como, al, una, un, que")),
+                                   radioButtons("wc_view_mode", "Modo de Vista:", choices = c("Nube de Palabras" = "cloud", "Heatmap (Plan vs Palabra)" = "heatmap"), inline = TRUE),
+                                   hr(),
+                                   radioButtons("verb_filter", "Filtrar acciones / verbos:", 
+                                                choices = c("Todas las palabras" = "all", "Solo verbos (infinitivos)" = "only_verbs", "Excluir verbos (infinitivos)" = "no_verbs"), selected = "all"),
+                                   h6("Filtros de Exclusión"), textInput("custom_stopwords", "Excluir palabras:", value = "para, el, la,esta,busca,medida,estos,este,sobre,tiene,estas,asimismo,entre,través,manera, los, las, con, de, en, del, a, y, o, por, se, su, sus, como, al, una, un, que")),
+                  
                   conditionalPanel(condition = "input.viz_mode == 'wordcloud_unique'", hr(), h6("Muerte Cruzada"),
                                    selectInput("unique_group_col", "Agrupar por:", choices = c("Plan", "Eje", "Área")), selectInput("unique_group_val", "Mostrar exclusivas de:", choices = NULL)),
+                  
+                  # Filtros Sankey (AÑADIDO BOTÓN NA/NC)
                   conditionalPanel(condition = "input.viz_mode == 'sankey'", hr(), h6("Ejes Sankey"),
                                    selectInput("sankey_source", "Origen:", choices = NULL), selectInput("sankey_target", "Destino:", choices = NULL),
-                                   radioButtons("sankey_label_format", "Formato de Etiquetas:", choices = c("Original" = "orig", "Nombre Completo" = "full", "Solo Acrónimo" = "acro"), selected = "orig")),
-                  conditionalPanel(condition = "input.viz_mode == 'freq'", hr(), h6("Configuración de Frecuencias"), selectInput("freq_col", "Variable a contar:", choices = NULL)),
+                                   radioButtons("sankey_label_format", "Formato de Etiquetas:", choices = c("Original" = "orig", "Nombre Completo" = "full", "Solo Acrónimo" = "acro"), selected = "orig"),
+                                   checkboxInput("show_na_sankey", "Incluir vacíos/nulos (como 'NA/NC')", value = FALSE)),
+                  
+                  # Filtros Frecuencias
+                  conditionalPanel(condition = "input.viz_mode == 'freq'", hr(), h6("Configuración de Frecuencias"), 
+                                   selectInput("freq_col", "Variable a contar:", choices = NULL),
+                                   checkboxInput("show_na", "Incluir vacíos/nulos (como 'NA/NC')", value = FALSE)),
+                  
+                  # Filtros Red
                   conditionalPanel(condition = "input.viz_mode == 'network'", hr(), h6("Configuración de Red"),
                                    numericInput("top_actors_n", "Cantidad Máxima de Actores (Top):", value = 10, min = 1),
                                    checkboxInput("shared_actors_only", "Mostrar SOLO actores compartidos (>1 Plan)", value = FALSE),
                                    radioButtons("net_dir", "Estructura Visual:", choices = c("Orgánico (Fuerza central)" = "force", "Jerarquía: Plan -> Actores" = "LR", "Jerarquía: Actores -> Plan" = "RL"), selected = "force"))
                 ),
-                conditionalPanel(condition = "input.viz_mode == 'wordcloud'", fluidRow(column(12, card(card_header("Nube de Análisis de Texto"), wordcloud2Output("nlp_wordcloud", height = "650px"))))),
-                conditionalPanel(condition = "input.viz_mode == 'wordcloud_unique'", fluidRow(column(12, card(card_header("Vocabulario Exclusivo"), wordcloud2Output("nlp_wordcloud_unique", height = "650px"))))),
+                
+                conditionalPanel(condition = "input.viz_mode == 'wordcloud'", 
+                                 fluidRow(column(12, card(card_header("Análisis de Texto Global"), 
+                                                          conditionalPanel("input.wc_view_mode == 'cloud'", wordcloud2Output("nlp_wordcloud", height = "650px")),
+                                                          conditionalPanel("input.wc_view_mode == 'heatmap'", plotlyOutput("nlp_heatmap", height = "650px"))
+                                 )))),
+                conditionalPanel(condition = "input.viz_mode == 'wordcloud_unique'", 
+                                 fluidRow(column(12, card(card_header("Vocabulario Exclusivo (Muerte Cruzada)"), 
+                                                          conditionalPanel("input.wc_view_mode == 'cloud'", wordcloud2Output("nlp_wordcloud_unique", height = "650px")),
+                                                          conditionalPanel("input.wc_view_mode == 'heatmap'", plotlyOutput("nlp_heatmap_unique", height = "650px"))
+                                 )))),
                 conditionalPanel(condition = "input.viz_mode == 'sankey'", fluidRow(column(12, card(card_header("Flujo Dinámico"), plotlyOutput("sankey_plot", height = "650px"))))),
                 conditionalPanel(condition = "input.viz_mode == 'freq'", fluidRow(column(12, card(card_header("Distribución de Frecuencias (Top 20)"), plotlyOutput("freq_plot", height = "650px"))))),
                 conditionalPanel(condition = "input.viz_mode == 'network'", fluidRow(column(12, card(card_header("Red de Colaboradores Externos"), visNetworkOutput("network_plot", height = "650px")))))
@@ -278,7 +294,6 @@ server <- function(input, output, session) {
     else { HTML(paste0("<div class='alert alert-success'><strong>Proyecto Activo:</strong><br>", active_project(), "</div>")) }
   })
   
-  # === CREAR PROYECTO ===
   observeEvent(input$create_proj_btn, {
     req(input$new_proj_name, input$upload_csv)
     proj_dir <- file.path(workspace, gsub("[^A-Za-z0-9_]", "_", input$new_proj_name))
@@ -289,13 +304,11 @@ server <- function(input, output, session) {
     dir.create(file.path(proj_dir, "config"))
     
     df_new <- leer_csv_robusto(input$upload_csv$datapath)
-    df_new <- fill_missing_ids(df_new) # Garantiza que ID exista y sea correlativo 1...n
-    
+    df_new <- fill_missing_ids(df_new)
     if(!"status" %in% names(df_new)) df_new$status <- "Pendiente"
     
     write_excel_csv2(df_new, file.path(proj_dir, "datos_brutos.csv"), na = "")
     
-    # ID ya no es una variable curable, es la llave del sistema
     base_cols <- setdiff(names(df_new), c("ID", "status"))
     initial_q_set <- data.frame(Pregunta = base_cols, Tipo = "Text Field", Opciones_Acronimos = "N/A (Texto Libre)", stringsAsFactors = FALSE)
     write_excel_csv2(initial_q_set, file.path(proj_dir, "config", "diccionario_variables.csv"), na = "")
@@ -307,14 +320,13 @@ server <- function(input, output, session) {
     shinyjs::click("load_proj_btn")
   })
   
-  # === CARGAR PROYECTO (BASADO EN ID ABSOLUTO) ===
   observeEvent(input$load_proj_btn, {
     req(input$existing_proj)
     proj_dir <- file.path(workspace, input$existing_proj)
     active_project(basename(proj_dir))
     
     df_bruta <- leer_csv_robusto(file.path(proj_dir, "datos_brutos.csv"))
-    df_bruta <- fill_missing_ids(df_bruta) # Garantía
+    df_bruta <- fill_missing_ids(df_bruta)
     
     rev_name <- gsub(" ", "_", input$reviewer_name)
     file_curado <- file.path(proj_dir, paste0("dataset_curado_", rev_name, ".csv"))
@@ -323,14 +335,9 @@ server <- function(input, output, session) {
     if (file.exists(file_curado)) {
       df_curado <- leer_csv_robusto(file_curado)
       df_curado <- fill_missing_ids(df_curado)
+      df_curado <- df_curado %>% filter(ID %in% df_bruta$ID) %>% distinct(ID, .keep_all = TRUE)
       
-      # Filtro de Fantasmas: Conservar en curado SOLO los IDs que existen en el Bruto oficial
-      df_curado <- df_curado %>% filter(ID %in% df_bruta$ID)
-      df_curado <- df_curado %>% distinct(ID, .keep_all = TRUE)
-      
-      # Identificar medidas genuinamente nuevas por ID
       nuevas <- df_bruta %>% filter(!ID %in% df_curado$ID)
-      
       if (nrow(nuevas) > 0) {
         df_final <- bind_rows(df_curado, nuevas)
         showNotification(paste("Se sincronizaron", nrow(nuevas), "medidas nuevas por ID."), type="message")
@@ -338,10 +345,7 @@ server <- function(input, output, session) {
         df_final <- df_curado
         showNotification("Proyecto cargado. Sesión restaurada con éxito.", type="message")
       }
-      
-      # Guardar purga
       write_excel_csv2(df_final, file_curado, na = "")
-      
     } else {
       showNotification("Proyecto cargado exitosamente.", type = "message")
     }
@@ -354,27 +358,20 @@ server <- function(input, output, session) {
       for(var_name in qs$Pregunta) {
         safe_name <- gsub("[^A-Za-z0-9_]", "_", var_name)
         opt_file <- file.path(proj_dir, "config", paste0("opciones_", safe_name, ".csv"))
-        if(file.exists(opt_file)) {
-          c_list[[var_name]] <- leer_csv_robusto(opt_file)
-        }
+        if(file.exists(opt_file)) c_list[[var_name]] <- leer_csv_robusto(opt_file)
       }
       choices_list_master(c_list)
       updateSelectInput(session, "q_select", choices = c("--- CREAR NUEVA ---", qs$Pregunta))
     }
     
     raw_data(df_bruta)
-    # Reordenar por ID para que la interfaz siempre sea ascendente y limpia
     df_final <- df_final %>% arrange(as.numeric(ID))
     curated_data(df_final)
     
     estado_limpio <- tolower(trimws(df_final$status))
     primer_pendiente <- which(estado_limpio == "pendiente")
-    if (length(primer_pendiente) > 0) {
-      current_row(primer_pendiente[1])
-    } else {
-      revisados <- which(estado_limpio != "pendiente")
-      if (length(revisados) > 0) current_row(max(revisados)) else current_row(1)
-    }
+    if (length(primer_pendiente) > 0) current_row(primer_pendiente[1])
+    else { revisados <- which(estado_limpio != "pendiente"); if (length(revisados) > 0) current_row(max(revisados)) else current_row(1) }
     
     if("Plan" %in% names(df_final)) { updateSelectizeInput(session, "plan_filter", choices = unique(na.omit(df_final$Plan))) }
     todas_columnas <- names(df_final)
@@ -383,7 +380,6 @@ server <- function(input, output, session) {
     updateSelectInput(session, "sankey_target", choices = todas_columnas, selected = if("Área" %in% todas_columnas) "Área" else todas_columnas[2])
   })
   
-  # === ACTUALIZAR PROYECTO (BASADO EN ID) ===
   observeEvent(input$update_proj_btn, {
     req(active_project(), input$update_csv)
     proj_dir <- file.path(workspace, active_project())
@@ -392,28 +388,21 @@ server <- function(input, output, session) {
     df_viejo <- leer_csv_robusto(file.path(proj_dir, "datos_brutos.csv"))
     
     df_viejo <- fill_missing_ids(df_viejo)
-    df_nuevo <- fill_missing_ids(df_nuevo, df_viejo) # Todo lo que venga sin ID se le asigna el siguiente consecutivo
+    df_nuevo <- fill_missing_ids(df_nuevo, df_viejo)
     
-    # Exclusivamente empalmar las filas cuyo ID no exista en el bruto original
     df_realmente_nuevo <- df_nuevo %>% filter(!ID %in% df_viejo$ID)
-    
     if(nrow(df_realmente_nuevo) > 0) {
       if(!"status" %in% names(df_realmente_nuevo)) df_realmente_nuevo$status <- "Pendiente"
       df_combinado <- bind_rows(df_viejo, df_realmente_nuevo) %>% distinct(ID, .keep_all = TRUE)
       write_excel_csv2(df_combinado, file.path(proj_dir, "datos_brutos.csv"), na = "")
     }
-    
     shinyjs::click("load_proj_btn") 
   })
   
-  # === CAPA 1.5: GESTIÓN DE RÚBRICA Y EXPORTACIÓN ===
   observeEvent(questions_set(), {
     qs <- questions_set()
-    if (nrow(qs) > 0) {
-      updateSelectInput(session, "q_select", choices = c("--- CREAR NUEVA ---", qs$Pregunta))
-    } else {
-      updateSelectInput(session, "q_select", choices = c("--- CREAR NUEVA ---"))
-    }
+    if (nrow(qs) > 0) updateSelectInput(session, "q_select", choices = c("--- CREAR NUEVA ---", qs$Pregunta))
+    else updateSelectInput(session, "q_select", choices = c("--- CREAR NUEVA ---"))
   })
   
   observeEvent(input$q_select, {
@@ -429,18 +418,13 @@ server <- function(input, output, session) {
         updateTextInput(session, "q_name_new", value = input$q_select)
         updateSelectInput(session, "q_type", selected = qs$Tipo[idx])
         c_list <- choices_list_master()
-        if(!is.null(c_list[[input$q_select]])) {
-          current_choices(c_list[[input$q_select]])
-        } else {
-          current_choices(data.frame(Choice=character(), Acronimo=character(), stringsAsFactors=FALSE))
-        }
+        if(!is.null(c_list[[input$q_select]])) current_choices(c_list[[input$q_select]])
+        else current_choices(data.frame(Choice=character(), Acronimo=character(), stringsAsFactors=FALSE))
       }
     }
   })
   
-  observeEvent(input$clear_choices_btn, {
-    current_choices(data.frame(Choice=character(), Acronimo=character(), stringsAsFactors=FALSE))
-  })
+  observeEvent(input$clear_choices_btn, { current_choices(data.frame(Choice=character(), Acronimo=character(), stringsAsFactors=FALSE)) })
   
   observeEvent(input$add_choice_btn, {
     req(input$c_name, input$c_acronym)
@@ -456,14 +440,11 @@ server <- function(input, output, session) {
     var_name <- if(is_new) input$q_name_new else input$q_select
     req(var_name != "")
     acronimos_str <- "N/A (Texto Libre)"
-    if(input$q_type != "Text Field" && nrow(current_choices()) > 0) {
-      acronimos_str <- paste(current_choices()$Acronimo, collapse = " | ")
-    }
+    if(input$q_type != "Text Field" && nrow(current_choices()) > 0) acronimos_str <- paste(current_choices()$Acronimo, collapse = " | ")
     qs <- questions_set()
     if (var_name %in% qs$Pregunta) {
       idx <- which(qs$Pregunta == var_name)
-      qs$Tipo[idx] <- input$q_type
-      qs$Opciones_Acronimos[idx] <- acronimos_str
+      qs$Tipo[idx] <- input$q_type; qs$Opciones_Acronimos[idx] <- acronimos_str
     } else {
       new_q <- data.frame(Pregunta = var_name, Tipo = input$q_type, Opciones_Acronimos = acronimos_str, stringsAsFactors = FALSE)
       qs <- bind_rows(qs, new_q)
@@ -480,80 +461,49 @@ server <- function(input, output, session) {
       safe_name <- gsub("[^A-Za-z0-9_]", "_", var_name)
       write_excel_csv2(current_choices(), file.path(proj_dir, "config", paste0("opciones_", safe_name, ".csv")), na = "")
     }
-    
     updateSelectInput(session, "q_select", selected = "--- CREAR NUEVA ---")
     showNotification("Variable actualizada y guardada en el proyecto.", type = "message")
   })
   
   observeEvent(input$delete_selected_q_btn, {
-    req(active_project())
-    if(input$q_select == "--- CREAR NUEVA ---") return()
-    
-    var_name <- input$q_select
-    qs <- questions_set()
-    qs <- qs[qs$Pregunta != var_name, ]
-    questions_set(qs)
-    
-    c_list <- choices_list_master()
-    c_list[[var_name]] <- NULL
-    choices_list_master(c_list)
-    
+    req(active_project()); if(input$q_select == "--- CREAR NUEVA ---") return()
+    var_name <- input$q_select; qs <- questions_set()
+    qs <- qs[qs$Pregunta != var_name, ]; questions_set(qs)
+    c_list <- choices_list_master(); c_list[[var_name]] <- NULL; choices_list_master(c_list)
     proj_dir <- file.path(workspace, active_project())
     write_excel_csv2(qs, file.path(proj_dir, "config", "diccionario_variables.csv"), na = "")
-    
     updateSelectInput(session, "q_select", selected = "--- CREAR NUEVA ---")
     showNotification(paste("Variable", var_name, "eliminada."), type="message")
   })
-  
   output$questions_set_tbl <- renderDT({ datatable(questions_set(), options = list(pageLength = 10), rownames = FALSE) })
   
-  # === NUEVO: LOGICA EXPORTAR WORD ===============================
   output$export_word_dict_btn <- downloadHandler(
-    filename = function() {
-      paste0("Diccionario_Variables_", Sys.Date(), ".docx")
-    },
+    filename = function() { paste0("Diccionario_Variables_", Sys.Date(), ".docx") },
     content = function(file) {
       req(questions_set())
-      qs <- questions_set()
-      c_master <- choices_list_master()
-      
-      # Generar doc. de officer
+      qs <- questions_set(); c_master <- choices_list_master()
       doc <- read_docx()
       doc <- body_add_par(doc, "Diccionario de Variables y Opciones", style = "heading 1")
-      
-      # Info del Proyecto
       if(!is.null(active_project())) {
         doc <- body_add_par(doc, paste("Proyecto activo:", active_project()), style = "Normal")
         doc <- body_add_par(doc, "", style = "Normal") 
       }
-      
-      # Iterar sobre las variables
       for (i in seq_len(nrow(qs))) {
-        q_name <- qs$Pregunta[i]
-        q_type <- qs$Tipo[i]
-        
+        q_name <- qs$Pregunta[i]; q_type <- qs$Tipo[i]
         doc <- body_add_par(doc, paste("Variable:", q_name), style = "heading 2")
         doc <- body_add_par(doc, paste("Tipo de dato:", q_type), style = "Normal")
-        
-        # Si tiene opciones adjuntas (Single o Multiple Choice)
         if (q_type != "Text Field") {
           choices_df <- c_master[[q_name]]
           if (!is.null(choices_df) && nrow(choices_df) > 0) {
             doc <- body_add_par(doc, "Opciones de clasificación disponibles:", style = "Normal")
-            # Agregar las opciones como tabla al documento de Word
             doc <- body_add_table(doc, value = choices_df, style = "table_template")
-          } else {
-            doc <- body_add_par(doc, "Sin opciones registradas.", style = "Normal")
-          }
+          } else { doc <- body_add_par(doc, "Sin opciones registradas.", style = "Normal") }
         }
-        # Añadir un espacio tras cada variable
         doc <- body_add_par(doc, "", style = "Normal")
       }
-      
       print(doc, target = file)
     }
   )
-  # ===============================================================
   
   # === CAPA 2: EVALUACIÓN ===
   output$results_table <- renderDT({ req(curated_data()); datatable(curated_data(), options = list(pageLength = 10, scrollX = TRUE), rownames = FALSE) })
@@ -563,27 +513,17 @@ server <- function(input, output, session) {
   observeEvent(input$prev_btn, { if (current_row() > 1) { current_row(current_row() - 1) } })
   
   output$curation_ui <- renderUI({
-    df <- curated_data()
-    raw <- raw_data() 
+    df <- curated_data(); raw <- raw_data() 
     if (is.null(df)) return(h5("Sube o Carga un Proyecto en la barra lateral.", class="text-danger"))
     
     idx <- current_row()
     row_data <- df[idx, ]
     
-    # Match estricto por ID
     raw_row <- raw[which(raw$ID == row_data$ID), ]
-    if(nrow(raw_row) == 0) {
-      raw_row <- setNames(data.frame(matrix(ncol = ncol(raw), nrow = 1)), names(raw))
-    } else {
-      raw_row <- raw_row[1, ]
-    }
+    if(nrow(raw_row) == 0) { raw_row <- setNames(data.frame(matrix(ncol = ncol(raw), nrow = 1)), names(raw)) } 
+    else { raw_row <- raw_row[1, ] }
     
-    val_header <- function(col) {
-      if (col %in% names(row_data) && !is.na(row_data[[col]]) && trimws(row_data[[col]]) != "") {
-        return(row_data[[col]])
-      }
-      return("N/A")
-    }
+    val_header <- function(col) { if (col %in% names(row_data) && !is.na(row_data[[col]]) && trimws(row_data[[col]]) != "") return(row_data[[col]]); return("N/A") }
     
     static_ui <- div(
       style = "background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin-bottom: 20px; border: 1px solid #dee2e6;",
@@ -595,31 +535,23 @@ server <- function(input, output, session) {
     
     safe_raw <- function(col) if(col %in% names(raw_row) && !is.na(raw_row[[col]])) raw_row[[col]] else "Sin datos originales"
     
-    ui_text <- list()
-    ui_select <- list()
-    
-    q_set <- questions_set()
-    c_master <- choices_list_master()
+    ui_text <- list(); ui_select <- list()
+    q_set <- questions_set(); c_master <- choices_list_master()
     long_fields <- c("Objetivo", "Descripción", "Acciones", "Potenciales barreras y obstáculos", "Tecnología, infraestructura y recursos necesarios", "Consideraciones de Genero", "Vinculación normativa")
     
     for (i in 1:nrow(q_set)) {
-      col_name <- q_set$Pregunta[i]
-      q_type <- q_set$Tipo[i]
+      col_name <- q_set$Pregunta[i]; q_type <- q_set$Tipo[i]
       input_id <- paste0("dyn_q_", idx, "_", gsub("[^A-Za-z0-9]", "_", col_name))
       current_val <- if (col_name %in% names(row_data)) row_data[[col_name]] else ""
       if (is.na(current_val) || is.null(current_val)) current_val <- "" 
       
       if (q_type == "Text Field") {
-        if (col_name %in% long_fields || nchar(as.character(current_val)) > 60) {
-          ui_text[[length(ui_text) + 1]] <- textAreaInput(input_id, col_name, value = current_val, rows = 4, width = "100%")
-        } else {
-          ui_text[[length(ui_text) + 1]] <- textInput(input_id, col_name, value = current_val, width = "100%")
-        }
+        if (col_name %in% long_fields || nchar(as.character(current_val)) > 60) ui_text[[length(ui_text) + 1]] <- textAreaInput(input_id, col_name, value = current_val, rows = 4, width = "100%")
+        else ui_text[[length(ui_text) + 1]] <- textInput(input_id, col_name, value = current_val, width = "100%")
       } else {
         choices_df <- c_master[[col_name]]
         choice_opts <- c()
         if (!is.null(choices_df) && nrow(choices_df) > 0) choice_opts <- setNames(choices_df$Acronimo, paste0(choices_df$Choice, " (", choices_df$Acronimo, ")"))
-        
         static_box <- div(style="color: #555; background: #e9ecef; padding: 6px 10px; border-radius: 4px; margin-bottom: 5px; font-size: 0.9em; border: 1px solid #ced4da;", safe_raw(col_name))
         
         if (q_type == "Single Choice") {
@@ -650,21 +582,15 @@ server <- function(input, output, session) {
   })
   
   observeEvent(input$save_next_btn, {
-    req(active_project())
-    df <- curated_data(); idx <- current_row()
-    status_val <- input[[paste0("cur_status_", idx)]]
-    if (!is.null(status_val)) { df$status[idx] <- status_val }
+    req(active_project()); df <- curated_data(); idx <- current_row()
+    status_val <- input[[paste0("cur_status_", idx)]]; if (!is.null(status_val)) { df$status[idx] <- status_val }
     
     q_set <- questions_set()
     if (nrow(q_set) > 0) {
       for (i in 1:nrow(q_set)) {
-        col_name <- q_set$Pregunta[i]
-        input_id <- paste0("dyn_q_", idx, "_", gsub("[^A-Za-z0-9]", "_", col_name))
+        col_name <- q_set$Pregunta[i]; input_id <- paste0("dyn_q_", idx, "_", gsub("[^A-Za-z0-9]", "_", col_name))
         val <- input[[input_id]]
-        if (!is.null(val)) {
-          if (length(val) > 1) val <- paste(val, collapse = "; ") 
-          df[idx, col_name] <- val
-        }
+        if (!is.null(val)) { if (length(val) > 1) val <- paste(val, collapse = "; "); df[idx, col_name] <- val }
       }
     }
     curated_data(df)
@@ -675,18 +601,14 @@ server <- function(input, output, session) {
     if (idx < nrow(df)) current_row(idx + 1)
   })
   
-  # === CAPA 2.5 CONSENSO ===
   observeEvent(input$run_consensus_btn, {
     req(input$consensus_files)
     df_list <- lapply(input$consensus_files$datapath, function(p) { leer_csv_robusto(p) })
     df_all <- bind_rows(df_list)
     base_cols <- names(raw_data())
     dyn_cols <- setdiff(names(df_all), c(base_cols, "status"))
-    master_df <- df_all %>%
-      group_by(ID) %>%
-      summarise(across(any_of(base_cols), ~ first(na.omit(.))), status = "Consolidado", across(any_of(dyn_cols), ~ resolve_metadata(., rule = input$meta_rule)), .groups = "drop")
-    consensus_data(master_df)
-    curated_data(master_df)
+    master_df <- df_all %>% group_by(ID) %>% summarise(across(any_of(base_cols), ~ first(na.omit(.))), status = "Consolidado", across(any_of(dyn_cols), ~ resolve_metadata(., rule = input$meta_rule)), .groups = "drop")
+    consensus_data(master_df); curated_data(master_df)
   })
   
   output$consensus_table <- renderDT({ req(consensus_data()); datatable(consensus_data(), options = list(pageLength = 5, scrollX = TRUE), rownames = FALSE) })
@@ -696,9 +618,7 @@ server <- function(input, output, session) {
   viz_data <- reactive({
     req(curated_data())
     df <- curated_data()
-    if (!is.null(input$plan_filter) && length(input$plan_filter) > 0 && "Plan" %in% names(df)) {
-      df <- df %>% filter(Plan %in% input$plan_filter)
-    }
+    if (!is.null(input$plan_filter) && length(input$plan_filter) > 0 && "Plan" %in% names(df)) df <- df %>% filter(Plan %in% input$plan_filter)
     return(df)
   })
   
@@ -706,17 +626,24 @@ server <- function(input, output, session) {
     df <- viz_data()
     actor_col <- "Colaboradores externos"
     if("Plan" %in% names(df) && actor_col %in% names(df)) {
-      total_actores <- df %>% 
-        select(all_of(actor_col)) %>% 
-        tidyr::drop_na() %>% 
-        tidyr::separate_rows(!!sym(actor_col), sep = ";\\s*") %>% 
-        mutate(!!sym(actor_col) := str_to_title(trimws(!!sym(actor_col)))) %>%
-        filter(!!sym(actor_col) != "") %>% 
-        pull(!!sym(actor_col)) %>% 
-        n_distinct()
+      total_actores <- df %>% select(all_of(actor_col)) %>% tidyr::drop_na() %>% tidyr::separate_rows(!!sym(actor_col), sep = ";\\s*") %>% mutate(!!sym(actor_col) := str_to_title(trimws(!!sym(actor_col)))) %>% filter(!!sym(actor_col) != "") %>% pull(!!sym(actor_col)) %>% n_distinct()
       updateNumericInput(session, "top_actors_n", value = total_actores, max = total_actores)
     }
   })
+  
+  # Helper de NLP para filtrar verbos infinitivos usando expresiones regulares.
+  # Ignora falsos positivos comunes que terminan en -ar, -er, -ir en español.
+  filtrar_verbos <- function(tokens, mode) {
+    if(is.null(mode) || mode == "all") return(tokens)
+    excepciones_inf <- c("lugar", "mujer", "primer", "tercer", "taller", "cualquier", "mar", "hogar", "celular", "familiar", "particular", "titular", "alquiler", "líder", "chofer", "carácter", "ayer", "bienestar", "super")
+    
+    if (mode == "only_verbs") {
+      tokens <- tokens %>% filter(str_detect(word, "[aei]r$") & !word %in% excepciones_inf)
+    } else if (mode == "no_verbs") {
+      tokens <- tokens %>% filter(!(str_detect(word, "[aei]r$") & !word %in% excepciones_inf))
+    }
+    return(tokens)
+  }
   
   output$nlp_wordcloud <- renderWordcloud2({
     df <- viz_data()
@@ -724,9 +651,31 @@ server <- function(input, output, session) {
     user_stops <- input$custom_stopwords %>% str_split(",") %>% unlist() %>% str_trim() %>% tolower()
     custom_stops <- data.frame(word = unique(user_stops))
     tokens <- df %>% select(ID, Descripción) %>% unnest_tokens(word, Descripción) %>% anti_join(custom_stops, by = "word") %>% filter(nchar(word) > 3) %>% filter(!str_detect(word, "^[0-9]+$"))
+    
+    tokens <- filtrar_verbos(tokens, input$verb_filter) # APLICACIÓN DE FILTRO DE VERBO
+    
     freqs <- tokens %>% count(word, sort = TRUE) %>% head(100)
     if(nrow(freqs) == 0) return(NULL)
     wordcloud2(freqs, size = 0.6)
+  })
+  
+  output$nlp_heatmap <- renderPlotly({
+    df <- viz_data()
+    if(is.null(df) || !"Descripción" %in% names(df)) return(NULL)
+    user_stops <- input$custom_stopwords %>% str_split(",") %>% unlist() %>% str_trim() %>% tolower()
+    custom_stops <- data.frame(word = unique(user_stops))
+    
+    group_col <- if("Plan" %in% names(df)) "Plan" else "ID"
+    tokens <- df %>% select(all_of(c(group_col, "Descripción"))) %>% rename(Grupo = !!sym(group_col)) %>% unnest_tokens(word, Descripción) %>% anti_join(custom_stops, by = "word") %>% filter(nchar(word) > 3) %>% filter(!str_detect(word, "^[0-9]+$"))
+    
+    tokens <- filtrar_verbos(tokens, input$verb_filter) # APLICACIÓN DE FILTRO DE VERBO
+    
+    top_words <- tokens %>% count(word, sort = TRUE) %>% head(20) %>% pull(word)
+    if(length(top_words) == 0) return(NULL)
+    
+    heat_df <- tokens %>% filter(word %in% top_words) %>% count(Grupo, word) %>% tidyr::complete(Grupo, word, fill = list(n = 0))
+    plot_ly(heat_df, x = ~Grupo, y = ~word, z = ~n, type = "heatmap", colors = colorRamp(c("#f7fbff", "#08306b"))) %>%
+      layout(title = "Frecuencia de Top Palabras", xaxis = list(title = group_col), yaxis = list(title = "Palabra"))
   })
   
   observe({
@@ -737,20 +686,49 @@ server <- function(input, output, session) {
   })
   
   output$nlp_wordcloud_unique <- renderWordcloud2({
-    df <- viz_data()
+    df_global <- curated_data() 
     req(input$unique_group_col, input$unique_group_val)
-    if(!"Descripción" %in% names(df) || !input$unique_group_col %in% names(df)) return(NULL)
+    if(!"Descripción" %in% names(df_global) || !input$unique_group_col %in% names(df_global)) return(NULL)
+    
     user_stops <- input$custom_stopwords %>% str_split(",") %>% unlist() %>% str_trim() %>% tolower()
     custom_stops <- data.frame(word = unique(user_stops))
-    tokens_grouped <- df %>% select(all_of(c(input$unique_group_col, "Descripción"))) %>% rename(Grupo = !!sym(input$unique_group_col)) %>% filter(!is.na(Grupo) & Grupo != "") %>% unnest_tokens(word, Descripción) %>% anti_join(custom_stops, by = "word") %>% filter(nchar(word) > 3) %>% filter(!str_detect(word, "^[0-9]+$"))
+    tokens_grouped <- df_global %>% select(all_of(c(input$unique_group_col, "Descripción"))) %>% rename(Grupo = !!sym(input$unique_group_col)) %>% filter(!is.na(Grupo) & Grupo != "") %>% unnest_tokens(word, Descripción) %>% anti_join(custom_stops, by = "word") %>% filter(nchar(word) > 3) %>% filter(!str_detect(word, "^[0-9]+$"))
+    
+    tokens_grouped <- filtrar_verbos(tokens_grouped, input$verb_filter) # APLICACIÓN DE FILTRO DE VERBO
+    
     word_distribution <- tokens_grouped %>% group_by(word) %>% summarise(n_grupos = n_distinct(Grupo))
     exclusive_words <- word_distribution %>% filter(n_grupos == 1) %>% pull(word)
     final_tokens <- tokens_grouped %>% filter(Grupo == input$unique_group_val) %>% filter(word %in% exclusive_words)
     freqs <- final_tokens %>% count(word, sort = TRUE) %>% head(80)
+    
     if(nrow(freqs) == 0) return(NULL)
     wordcloud2(freqs, size = 0.6, color = "random-light", backgroundColor = "#2c3e50")
   })
   
+  output$nlp_heatmap_unique <- renderPlotly({
+    df_global <- curated_data()
+    req(input$unique_group_col, input$unique_group_val)
+    if(!"Descripción" %in% names(df_global) || !input$unique_group_col %in% names(df_global)) return(NULL)
+    
+    user_stops <- input$custom_stopwords %>% str_split(",") %>% unlist() %>% str_trim() %>% tolower()
+    custom_stops <- data.frame(word = unique(user_stops))
+    tokens_grouped <- df_global %>% select(all_of(c(input$unique_group_col, "Descripción"))) %>% rename(Grupo = !!sym(input$unique_group_col)) %>% filter(!is.na(Grupo) & Grupo != "") %>% unnest_tokens(word, Descripción) %>% anti_join(custom_stops, by = "word") %>% filter(nchar(word) > 3) %>% filter(!str_detect(word, "^[0-9]+$"))
+    
+    tokens_grouped <- filtrar_verbos(tokens_grouped, input$verb_filter) # APLICACIÓN DE FILTRO DE VERBO
+    
+    word_distribution <- tokens_grouped %>% group_by(word) %>% summarise(n_grupos = n_distinct(Grupo))
+    exclusive_words <- word_distribution %>% filter(n_grupos == 1) %>% pull(word)
+    final_tokens <- tokens_grouped %>% filter(Grupo == input$unique_group_val) %>% filter(word %in% exclusive_words)
+    
+    top_words <- final_tokens %>% count(word, sort = TRUE) %>% head(20) %>% pull(word)
+    if(length(top_words) == 0) return(NULL)
+    
+    heat_df <- final_tokens %>% filter(word %in% top_words) %>% count(Grupo, word) %>% tidyr::complete(Grupo, word, fill = list(n = 0))
+    plot_ly(heat_df, x = ~Grupo, y = ~word, z = ~n, type = "heatmap", colors = colorRamp(c("#fdfbfb", "#e74c3c"))) %>%
+      layout(title = paste("Frecuencia Palabras Exclusivas:", input$unique_group_val), xaxis = list(title = input$unique_group_col), yaxis = list(title = "Palabra"))
+  })
+  
+  # === SANKEY PLOT (CON LÓGICA REFINADA NA/NC) ===
   output$sankey_plot <- renderPlotly({
     df <- viz_data()
     v_orig <- input$sankey_source
@@ -758,12 +736,20 @@ server <- function(input, output, session) {
     if(is.null(df) || nrow(df) == 0 || is.null(v_orig) || is.null(v_dest)) return(NULL)
     if(!(v_orig %in% names(df) && v_dest %in% names(df))) return(NULL)
     
-    sankey_df <- df %>% select(all_of(c(v_orig, v_dest))) %>% tidyr::drop_na() %>% 
+    # 1. Limpieza y Agrupamiento de Nulos y Vacíos
+    sankey_df <- df %>% select(all_of(c(v_orig, v_dest))) %>%
+      mutate(across(everything(), as.character)) %>%
+      mutate(across(everything(), ~ ifelse(is.na(.) | trimws(.) == "" | tolower(trimws(.)) %in% c("na", "nc", "n/a", "sin informacion"), "NA/NC", trimws(.)))) %>%
       tidyr::separate_rows(!!sym(v_orig), sep = ";\\s*") %>% 
-      tidyr::separate_rows(!!sym(v_dest), sep = ";\\s*") %>% 
-      filter(!!sym(v_orig) != "", !!sym(v_dest) != "") %>% 
-      count(!!sym(v_orig), !!sym(v_dest), name = "value")
+      tidyr::separate_rows(!!sym(v_dest), sep = ";\\s*") %>%
+      mutate(across(everything(), ~ ifelse(is.na(.) | trimws(.) == "", "NA/NC", trimws(.))))
     
+    # 2. Filtrar exclusión NA/NC si la casilla está DESMARCADA
+    if(is.null(input$show_na_sankey) || !input$show_na_sankey) {
+      sankey_df <- sankey_df %>% filter(!!sym(v_orig) != "NA/NC", !!sym(v_dest) != "NA/NC")
+    }
+    
+    sankey_df <- sankey_df %>% count(!!sym(v_orig), !!sym(v_dest), name = "value")
     if(nrow(sankey_df) == 0) return(NULL)
     
     orig_nodes <- paste0(sankey_df[[v_orig]], " (Orig)")
@@ -775,12 +761,39 @@ server <- function(input, output, session) {
     clean_nodes <- gsub(" \\(Orig\\)| \\(Dest\\)", "", all_nodes)
     
     if(!is.null(input$sankey_label_format)) {
-      if(input$sankey_label_format == "full") {
-        clean_nodes <- sub("\\s*\\([^)]+\\)$", "", clean_nodes)
-      } else if(input$sankey_label_format == "acro") {
-        paren_idx <- grepl("\\([^)]+\\)$", clean_nodes)
-        clean_nodes[paren_idx] <- sub("^.*\\(([^)]+)\\)$", "\\1", clean_nodes[paren_idx])
+      c_master <- choices_list_master()
+      mapped_nodes <- clean_nodes
+      
+      for (i in seq_along(clean_nodes)) {
+        val <- clean_nodes[i]
+        found <- FALSE
+        for (q_name in names(c_master)) {
+          opts <- c_master[[q_name]]
+          if (!is.null(opts) && nrow(opts) > 0) {
+            idx_acro <- which(opts$Acronimo == val)
+            if (length(idx_acro) > 0) {
+              if (input$sankey_label_format == "full") mapped_nodes[i] <- opts$Choice[idx_acro[1]]
+              else if (input$sankey_label_format == "orig") mapped_nodes[i] <- val
+              found <- TRUE; break
+            }
+            idx_choice <- which(opts$Choice == val)
+            if (length(idx_choice) > 0) {
+              if (input$sankey_label_format == "acro") mapped_nodes[i] <- opts$Acronimo[idx_choice[1]]
+              else if (input$sankey_label_format == "orig") mapped_nodes[i] <- val
+              found <- TRUE; break
+            }
+          }
+        }
+        
+        if (!found) {
+          if (input$sankey_label_format == "full") {
+            mapped_nodes[i] <- sub("\\s*\\([^)]+\\)$", "", val)
+          } else if (input$sankey_label_format == "acro") {
+            if (grepl("\\([^)]+\\)$", val)) mapped_nodes[i] <- sub("^.*\\(([^)]+)\\)$", "\\1", val)
+          }
+        }
       }
+      clean_nodes <- mapped_nodes
     }
     
     plot_ly(type = "sankey", orientation = "h", 
@@ -788,15 +801,34 @@ server <- function(input, output, session) {
             link = list(source = sankey_df$source, target = sankey_df$target, value = sankey_df$value))
   })
   
+  # === FREQUENCY PLOT (CON LÓGICA REFINADA NA/NC) ===
   output$freq_plot <- renderPlotly({
     df <- viz_data()
     req(input$freq_col %in% names(df))
-    freq_df <- df %>% select(all_of(input$freq_col)) %>% tidyr::drop_na() %>% tidyr::separate_rows(!!sym(input$freq_col), sep = ";\\s*") %>% filter(!!sym(input$freq_col) != "") %>% mutate(Categoria = trimws(!!sym(input$freq_col))) %>% count(Categoria, name = "Conteo") %>% arrange(desc(Conteo)) %>% head(20)
+    
+    # 1. Limpieza y Agrupamiento
+    freq_df <- df %>% select(all_of(input$freq_col)) %>%
+      mutate(Categoria = as.character(!!sym(input$freq_col))) %>%
+      mutate(Categoria = ifelse(is.na(Categoria) | trimws(Categoria) == "" | tolower(trimws(Categoria)) %in% c("na", "nc", "n/a", "sin informacion"), "NA/NC", trimws(Categoria))) %>%
+      tidyr::separate_rows(Categoria, sep = ";\\s*") %>%
+      mutate(Categoria = ifelse(is.na(Categoria) | trimws(Categoria) == "", "NA/NC", trimws(Categoria)))
+    
+    # 2. Filtrar NA/NC si la casilla está DESMARCADA
+    if (is.null(input$show_na) || !input$show_na) {
+      freq_df <- freq_df %>% filter(Categoria != "NA/NC")
+    } 
+    
+    freq_df <- freq_df %>% count(Categoria, name = "Conteo") %>% arrange(desc(Conteo)) %>% head(20)
     if(nrow(freq_df) == 0) return(NULL)
+    
     freq_df$Categoria_Corta <- str_trunc(freq_df$Categoria, 20, "right")
     freq_df <- freq_df %>% arrange(Conteo)
     freq_df$Categoria_Corta <- factor(freq_df$Categoria_Corta, levels = unique(freq_df$Categoria_Corta))
-    plot_ly(freq_df, x = ~Conteo, y = ~Categoria_Corta, type = 'bar', orientation = 'h', marker = list(color = '#3498db')) %>% layout(xaxis = list(title = "Cantidad de Medidas"), yaxis = list(title = input$freq_col), margin = list(l = 150))
+    
+    plot_ly(freq_df, x = ~Conteo, y = ~Categoria_Corta, type = 'bar', orientation = 'h', 
+            text = ~Conteo, textposition = 'auto', 
+            marker = list(color = '#3498db')) %>% 
+      layout(xaxis = list(title = "Cantidad de Medidas"), yaxis = list(title = input$freq_col), margin = list(l = 150))
   })
   
   output$network_plot <- renderVisNetwork({
@@ -810,12 +842,7 @@ server <- function(input, output, session) {
       filter(!!sym(actor_col) != "") 
     
     if(!is.null(input$shared_actors_only) && input$shared_actors_only) {
-      actores_compartidos <- net_df %>% 
-        group_by(!!sym(actor_col)) %>% 
-        summarise(n_planes = n_distinct(Plan)) %>% 
-        filter(n_planes > 1) %>% 
-        pull(!!sym(actor_col))
-      
+      actores_compartidos <- net_df %>% group_by(!!sym(actor_col)) %>% summarise(n_planes = n_distinct(Plan)) %>% filter(n_planes > 1) %>% pull(!!sym(actor_col))
       net_df <- net_df %>% filter(!!sym(actor_col) %in% actores_compartidos)
     }
     
