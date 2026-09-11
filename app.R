@@ -5,7 +5,8 @@
 
 paquetes_requeridos <- c("shiny", "bslib", "DT", "dplyr", "tidytext", 
                          "ggplot2", "stringr", "shinyjs", "plotly", 
-                         "wordcloud2", "tidyr", "visNetwork", "readr", "officer")
+                         "wordcloud2", "tidyr", "visNetwork", "readr", "officer",
+                         "quanteda", "quanteda.textstats")
 
 paquetes_faltantes <- paquetes_requeridos[!(paquetes_requeridos %in% installed.packages()[,"Package"])]
 if(length(paquetes_faltantes)) {
@@ -26,6 +27,8 @@ library(tidyr)
 library(visNetwork)
 library(readr)
 library(officer) 
+library(quanteda)
+library(quanteda.textstats)
 
 # ==============================================================================
 # FUNCIONES DE LECTURA ROBUSTA
@@ -62,7 +65,8 @@ leer_csv_robusto <- function(ruta) {
   
   df <- suppressWarnings(readr::read_delim(
     temp_file, delim = separador_usado, show_col_types = FALSE, na = c("", "NA"),
-    escape_double = TRUE, trim_ws = TRUE, name_repair = "minimal"
+    escape_double = TRUE, trim_ws = TRUE, name_repair = "minimal",
+    col_types = readr::cols(.default = "c") 
   ))
   unlink(temp_file)
   df <- as.data.frame(df, stringsAsFactors = FALSE)
@@ -100,19 +104,6 @@ fill_missing_ids <- function(df, df_ref = NULL) {
   df <- df %>% relocate(ID)
   df$ID <- as.character(df$ID) 
   return(df)
-}
-
-resolve_status <- function(st_vec, rule) {
-  st_clean <- tolower(trimws(st_vec))
-  n_total <- length(st_clean[st_clean != ""])
-  if(n_total == 0) return("Excluido")
-  n_inc <- sum(grepl("inclu", st_clean), na.rm=TRUE)
-  n_exc <- sum(grepl("exclu", st_clean), na.rm=TRUE)
-  if(rule == "majority") {
-    if(n_inc > n_total/2) return("Aprobado")
-    else if(n_exc > n_total/2) return("Rechazado")
-    else return("CONFLICTO")
-  } else { return(tools::toTitleCase(st_clean[1])) }
 }
 
 resolve_metadata <- function(vals, rule) {
@@ -212,32 +203,44 @@ ui <- page_sidebar(
                   title = "Filtros y Controles",
                   selectizeInput("plan_filter", "Filtrar por Plan(es):", choices = NULL, multiple = TRUE, options = list(placeholder = 'Todos los planes')), hr(),
                   selectInput("viz_mode", "Seleccionar Gráfico:", 
-                              choices = c("1. Nube de Palabras Global" = "wordcloud", "2. Nube de Palabras Únicas (Muerte Cruzada)" = "wordcloud_unique",
+                              choices = c("1. Nube de Palabras Global" = "wordcloud", "2. Nube de Palabras Únicas (Keyness)" = "wordcloud_unique",
                                           "3. Flujo Dinámico de Relaciones (Sankey)" = "sankey", "4. Gráfico de Frecuencias" = "freq", "5. Red Plan vs Actores" = "network")), hr(),
                   
-                  # Filtros de Texto / NLP (AÑADIDOS FILTROS DE VERBOS)
+                  conditionalPanel(condition = "input.viz_mode == 'wordcloud'",
+                                   radioButtons("wc_count_mode", "Modo de Cálculo:", 
+                                                choices = c("Ponderado por Dispersión (Anti-sesgo)" = "pond", "Frecuencia Absoluta (Clásico)" = "abs"), 
+                                                selected = "pond"),
+                                   hr()),
+                  
+                  # === FILTROS NLP ===
                   conditionalPanel(condition = "input.viz_mode == 'wordcloud' || input.viz_mode == 'wordcloud_unique'",
                                    radioButtons("wc_view_mode", "Modo de Vista:", choices = c("Nube de Palabras" = "cloud", "Heatmap (Plan vs Palabra)" = "heatmap"), inline = TRUE),
                                    hr(),
+                                   
+                                   # NUEVO: Selector de Unigramas vs Bigramas
+                                   radioButtons("ngram_mode", "Composición de Palabras:", 
+                                                choices = c("Solo Palabras (Unigramas)" = "unigrams", 
+                                                            "Pares (Bigramas)" = "bigrams", 
+                                                            "Ambos mezclados" = "both"), 
+                                                selected = "unigrams"),
+                                   hr(),
+                                   
                                    radioButtons("verb_filter", "Filtrar acciones / verbos:", 
                                                 choices = c("Todas las palabras" = "all", "Solo verbos (infinitivos)" = "only_verbs", "Excluir verbos (infinitivos)" = "no_verbs"), selected = "all"),
                                    h6("Filtros de Exclusión"), textInput("custom_stopwords", "Excluir palabras:", value = "para, el, la,esta,busca,medida,estos,este,sobre,tiene,estas,asimismo,entre,través,manera, los, las, con, de, en, del, a, y, o, por, se, su, sus, como, al, una, un, que")),
                   
-                  conditionalPanel(condition = "input.viz_mode == 'wordcloud_unique'", hr(), h6("Muerte Cruzada"),
+                  conditionalPanel(condition = "input.viz_mode == 'wordcloud_unique'", hr(), h6("Análisis Keyness"),
                                    selectInput("unique_group_col", "Agrupar por:", choices = c("Plan", "Eje", "Área")), selectInput("unique_group_val", "Mostrar exclusivas de:", choices = NULL)),
                   
-                  # Filtros Sankey (AÑADIDO BOTÓN NA/NC)
                   conditionalPanel(condition = "input.viz_mode == 'sankey'", hr(), h6("Ejes Sankey"),
                                    selectInput("sankey_source", "Origen:", choices = NULL), selectInput("sankey_target", "Destino:", choices = NULL),
                                    radioButtons("sankey_label_format", "Formato de Etiquetas:", choices = c("Original" = "orig", "Nombre Completo" = "full", "Solo Acrónimo" = "acro"), selected = "orig"),
                                    checkboxInput("show_na_sankey", "Incluir vacíos/nulos (como 'NA/NC')", value = FALSE)),
                   
-                  # Filtros Frecuencias
                   conditionalPanel(condition = "input.viz_mode == 'freq'", hr(), h6("Configuración de Frecuencias"), 
                                    selectInput("freq_col", "Variable a contar:", choices = NULL),
                                    checkboxInput("show_na", "Incluir vacíos/nulos (como 'NA/NC')", value = FALSE)),
                   
-                  # Filtros Red
                   conditionalPanel(condition = "input.viz_mode == 'network'", hr(), h6("Configuración de Red"),
                                    numericInput("top_actors_n", "Cantidad Máxima de Actores (Top):", value = 10, min = 1),
                                    checkboxInput("shared_actors_only", "Mostrar SOLO actores compartidos (>1 Plan)", value = FALSE),
@@ -250,7 +253,7 @@ ui <- page_sidebar(
                                                           conditionalPanel("input.wc_view_mode == 'heatmap'", plotlyOutput("nlp_heatmap", height = "650px"))
                                  )))),
                 conditionalPanel(condition = "input.viz_mode == 'wordcloud_unique'", 
-                                 fluidRow(column(12, card(card_header("Vocabulario Exclusivo (Muerte Cruzada)"), 
+                                 fluidRow(column(12, card(card_header("Vocabulario Exclusivo (Keyness Chi-Cuadrado)"), 
                                                           conditionalPanel("input.wc_view_mode == 'cloud'", wordcloud2Output("nlp_wordcloud_unique", height = "650px")),
                                                           conditionalPanel("input.wc_view_mode == 'heatmap'", plotlyOutput("nlp_heatmap_unique", height = "650px"))
                                  )))),
@@ -477,34 +480,6 @@ server <- function(input, output, session) {
   })
   output$questions_set_tbl <- renderDT({ datatable(questions_set(), options = list(pageLength = 10), rownames = FALSE) })
   
-  output$export_word_dict_btn <- downloadHandler(
-    filename = function() { paste0("Diccionario_Variables_", Sys.Date(), ".docx") },
-    content = function(file) {
-      req(questions_set())
-      qs <- questions_set(); c_master <- choices_list_master()
-      doc <- read_docx()
-      doc <- body_add_par(doc, "Diccionario de Variables y Opciones", style = "heading 1")
-      if(!is.null(active_project())) {
-        doc <- body_add_par(doc, paste("Proyecto activo:", active_project()), style = "Normal")
-        doc <- body_add_par(doc, "", style = "Normal") 
-      }
-      for (i in seq_len(nrow(qs))) {
-        q_name <- qs$Pregunta[i]; q_type <- qs$Tipo[i]
-        doc <- body_add_par(doc, paste("Variable:", q_name), style = "heading 2")
-        doc <- body_add_par(doc, paste("Tipo de dato:", q_type), style = "Normal")
-        if (q_type != "Text Field") {
-          choices_df <- c_master[[q_name]]
-          if (!is.null(choices_df) && nrow(choices_df) > 0) {
-            doc <- body_add_par(doc, "Opciones de clasificación disponibles:", style = "Normal")
-            doc <- body_add_table(doc, value = choices_df, style = "table_template")
-          } else { doc <- body_add_par(doc, "Sin opciones registradas.", style = "Normal") }
-        }
-        doc <- body_add_par(doc, "", style = "Normal")
-      }
-      print(doc, target = file)
-    }
-  )
-  
   # === CAPA 2: EVALUACIÓN ===
   output$results_table <- renderDT({ req(curated_data()); datatable(curated_data(), options = list(pageLength = 10, scrollX = TRUE), rownames = FALSE) })
   
@@ -631,8 +606,6 @@ server <- function(input, output, session) {
     }
   })
   
-  # Helper de NLP para filtrar verbos infinitivos usando expresiones regulares.
-  # Ignora falsos positivos comunes que terminan en -ar, -er, -ir en español.
   filtrar_verbos <- function(tokens, mode) {
     if(is.null(mode) || mode == "all") return(tokens)
     excepciones_inf <- c("lugar", "mujer", "primer", "tercer", "taller", "cualquier", "mar", "hogar", "celular", "familiar", "particular", "titular", "alquiler", "líder", "chofer", "carácter", "ayer", "bienestar", "super")
@@ -645,37 +618,130 @@ server <- function(input, output, session) {
     return(tokens)
   }
   
+  # ====================================================================
+  # MOTOR CENTRAL DE TOKENIZACIÓN (Soporta Unigramas y Bigramas)
+  # ====================================================================
+  generar_tokens <- function(df, text_col, group_col, stopwords_str, verb_filter, ngram_type) {
+    user_stops <- stopwords_str %>% str_split(",") %>% unlist() %>% str_trim() %>% tolower()
+    custom_stops <- data.frame(word = unique(user_stops))
+    
+    df_clean <- df %>% 
+      select(all_of(c(group_col, text_col))) %>% 
+      rename(Grupo = !!sym(group_col), Texto = !!sym(text_col)) %>% 
+      filter(!is.na(Grupo) & Grupo != "")
+    
+    res <- tibble(Grupo = character(), word = character())
+    
+    # 1. Procesar Unigramas (Palabras sueltas)
+    if (ngram_type %in% c("unigrams", "both")) {
+      t1 <- df_clean %>% 
+        unnest_tokens(word, Texto) %>% 
+        anti_join(custom_stops, by = "word") %>% 
+        filter(nchar(word) > 3, !str_detect(word, "^[0-9]+$"))
+      
+      t1 <- filtrar_verbos(t1, verb_filter)
+      res <- bind_rows(res, t1)
+    }
+    
+    # 2. Procesar Bigramas (Pares de palabras)
+    if (ngram_type %in% c("bigrams", "both")) {
+      t2 <- df_clean %>% 
+        unnest_tokens(word, Texto, token = "ngrams", n = 2) %>% 
+        filter(!is.na(word)) %>% 
+        tidyr::separate(word, c("w1", "w2"), sep = " ", remove = FALSE) %>% 
+        # Elimina el bigrama si CUALQUIERA de las dos palabras es una stopword
+        filter(!w1 %in% custom_stops$word, !w2 %in% custom_stops$word) %>% 
+        filter(nchar(w1) > 2, nchar(w2) > 2) %>% 
+        filter(!str_detect(w1, "^[0-9]+$"), !str_detect(w2, "^[0-9]+$"))
+      
+      # Filtro de verbos opcional para bigramas (busca terminaciones ar/er/ir)
+      if (verb_filter == "only_verbs") {
+        excepciones_inf <- c("lugar", "mujer", "primer", "tercer", "taller", "cualquier", "mar", "hogar", "celular", "familiar", "particular", "titular", "alquiler", "líder", "chofer", "carácter", "ayer", "bienestar", "super")
+        t2 <- t2 %>% filter((str_detect(w1, "[aei]r$") & !w1 %in% excepciones_inf) | (str_detect(w2, "[aei]r$") & !w2 %in% excepciones_inf))
+      } else if (verb_filter == "no_verbs") {
+        excepciones_inf <- c("lugar", "mujer", "primer", "tercer", "taller", "cualquier", "mar", "hogar", "celular", "familiar", "particular", "titular", "alquiler", "líder", "chofer", "carácter", "ayer", "bienestar", "super")
+        t2 <- t2 %>% filter(!(str_detect(w1, "[aei]r$") & !w1 %in% excepciones_inf) & !(str_detect(w2, "[aei]r$") & !w2 %in% excepciones_inf))
+      }
+      
+      t2 <- t2 %>% select(Grupo, word)
+      res <- bind_rows(res, t2)
+    }
+    
+    return(res)
+  }
+  
+  # ====================================================================
+  # NUBE 1: NUBE GLOBAL (Con Selector de Ponderación)
+  # ====================================================================
   output$nlp_wordcloud <- renderWordcloud2({
     df <- viz_data()
-    if(is.null(df) || !"Descripción" %in% names(df)) return(NULL)
-    user_stops <- input$custom_stopwords %>% str_split(",") %>% unlist() %>% str_trim() %>% tolower()
-    custom_stops <- data.frame(word = unique(user_stops))
-    tokens <- df %>% select(ID, Descripción) %>% unnest_tokens(word, Descripción) %>% anti_join(custom_stops, by = "word") %>% filter(nchar(word) > 3) %>% filter(!str_detect(word, "^[0-9]+$"))
+    idx_desc <- grep("descripci", tolower(names(df)))
     
-    tokens <- filtrar_verbos(tokens, input$verb_filter) # APLICACIÓN DE FILTRO DE VERBO
+    if(length(idx_desc) == 0) {
+      showNotification("ERROR: No se encontró la columna Descripción.", type = "error")
+      return(NULL)
+    }
     
-    freqs <- tokens %>% count(word, sort = TRUE) %>% head(100)
+    nombre_col_real <- names(df)[idx_desc[1]] 
+    group_col <- if("Plan" %in% names(df)) "Plan" else "ID" 
+    
+    tokens <- generar_tokens(df, nombre_col_real, group_col, input$custom_stopwords, input$verb_filter, input$ngram_mode)
+    if(nrow(tokens) == 0) return(NULL)
+    
+    total_grupos <- n_distinct(tokens$Grupo)
+    
+    word_metrics <- tokens %>% 
+      group_by(word) %>% 
+      summarise(
+        frecuencia_absoluta = n(),
+        grupos_distintos = n_distinct(Grupo)
+      ) 
+    
+    # === APLICAR LÓGICA SEGÚN EL BOTÓN DEL UI ===
+    if (!is.null(input$wc_count_mode) && input$wc_count_mode == "pond") {
+      word_metrics <- word_metrics %>%
+        mutate(
+          peso_dispersion = grupos_distintos / total_grupos,
+          freq_final = frecuencia_absoluta * peso_dispersion
+        ) %>%
+        filter(grupos_distintos > 1 | total_grupos == 1)
+    } else {
+      word_metrics <- word_metrics %>%
+        mutate(freq_final = frecuencia_absoluta)
+    }
+    
+    freqs <- word_metrics %>% 
+      arrange(desc(freq_final)) %>% 
+      head(100) %>% 
+      select(word, freq = freq_final)
+    
+    freqs <- as.data.frame(freqs) 
     if(nrow(freqs) == 0) return(NULL)
+    
+    freqs$freq <- round(freqs$freq, 1)
     wordcloud2(freqs, size = 0.6)
   })
   
+  # ====================================================================
+  # HEATMAP 1: GLOBAL
+  # ====================================================================
   output$nlp_heatmap <- renderPlotly({
     df <- viz_data()
-    if(is.null(df) || !"Descripción" %in% names(df)) return(NULL)
-    user_stops <- input$custom_stopwords %>% str_split(",") %>% unlist() %>% str_trim() %>% tolower()
-    custom_stops <- data.frame(word = unique(user_stops))
+    idx_desc <- grep("descripci", tolower(names(df)))
+    if(length(idx_desc) == 0) return(NULL)
     
+    nombre_col_real <- names(df)[idx_desc[1]]
     group_col <- if("Plan" %in% names(df)) "Plan" else "ID"
-    tokens <- df %>% select(all_of(c(group_col, "Descripción"))) %>% rename(Grupo = !!sym(group_col)) %>% unnest_tokens(word, Descripción) %>% anti_join(custom_stops, by = "word") %>% filter(nchar(word) > 3) %>% filter(!str_detect(word, "^[0-9]+$"))
     
-    tokens <- filtrar_verbos(tokens, input$verb_filter) # APLICACIÓN DE FILTRO DE VERBO
+    tokens <- generar_tokens(df, nombre_col_real, group_col, input$custom_stopwords, input$verb_filter, input$ngram_mode)
+    if(nrow(tokens) == 0) return(NULL)
     
     top_words <- tokens %>% count(word, sort = TRUE) %>% head(20) %>% pull(word)
     if(length(top_words) == 0) return(NULL)
     
     heat_df <- tokens %>% filter(word %in% top_words) %>% count(Grupo, word) %>% tidyr::complete(Grupo, word, fill = list(n = 0))
     plot_ly(heat_df, x = ~Grupo, y = ~word, z = ~n, type = "heatmap", colors = colorRamp(c("#f7fbff", "#08306b"))) %>%
-      layout(title = "Frecuencia de Top Palabras", xaxis = list(title = group_col), yaxis = list(title = "Palabra"))
+      layout(title = "Frecuencia de Top Términos", xaxis = list(title = group_col), yaxis = list(title = "Término"))
   })
   
   observe({
@@ -685,50 +751,81 @@ server <- function(input, output, session) {
     updateSelectInput(session, "unique_group_val", choices = opciones)
   })
   
+  # ====================================================================
+  # NUBE 2: KEYNESS (Muerte Cruzada)
+  # ====================================================================
   output$nlp_wordcloud_unique <- renderWordcloud2({
     df_global <- curated_data() 
     req(input$unique_group_col, input$unique_group_val)
-    if(!"Descripción" %in% names(df_global) || !input$unique_group_col %in% names(df_global)) return(NULL)
     
-    user_stops <- input$custom_stopwords %>% str_split(",") %>% unlist() %>% str_trim() %>% tolower()
-    custom_stops <- data.frame(word = unique(user_stops))
-    tokens_grouped <- df_global %>% select(all_of(c(input$unique_group_col, "Descripción"))) %>% rename(Grupo = !!sym(input$unique_group_col)) %>% filter(!is.na(Grupo) & Grupo != "") %>% unnest_tokens(word, Descripción) %>% anti_join(custom_stops, by = "word") %>% filter(nchar(word) > 3) %>% filter(!str_detect(word, "^[0-9]+$"))
+    idx_desc <- grep("descripci", tolower(names(df_global)))
+    if(length(idx_desc) == 0 || !input$unique_group_col %in% names(df_global)) return(NULL)
     
-    tokens_grouped <- filtrar_verbos(tokens_grouped, input$verb_filter) # APLICACIÓN DE FILTRO DE VERBO
+    nombre_col_real <- names(df_global)[idx_desc[1]]
     
-    word_distribution <- tokens_grouped %>% group_by(word) %>% summarise(n_grupos = n_distinct(Grupo))
-    exclusive_words <- word_distribution %>% filter(n_grupos == 1) %>% pull(word)
-    final_tokens <- tokens_grouped %>% filter(Grupo == input$unique_group_val) %>% filter(word %in% exclusive_words)
-    freqs <- final_tokens %>% count(word, sort = TRUE) %>% head(80)
+    tokens_grouped <- generar_tokens(df_global, nombre_col_real, input$unique_group_col, input$custom_stopwords, input$verb_filter, input$ngram_mode)
+    if(nrow(tokens_grouped) == 0) return(NULL)
     
+    word_counts <- tokens_grouped %>% count(Grupo, word)
+    if(nrow(word_counts) == 0) return(NULL)
+    
+    mi_dfm <- word_counts %>% cast_dfm(document = Grupo, term = word, value = n)
+    
+    stat_keyness <- tryCatch({
+      textstat_keyness(mi_dfm, target = as.character(input$unique_group_val))
+    }, error = function(e) { return(NULL) })
+    
+    if(is.null(stat_keyness) || nrow(stat_keyness) == 0) return(NULL)
+    
+    freqs <- stat_keyness %>% 
+      filter(chi2 > 0 & p < 0.05) %>% 
+      arrange(desc(chi2)) %>% 
+      head(80) %>% 
+      select(word = feature, freq = chi2) %>%
+      mutate(freq = round(freq, 1))
+    
+    freqs <- as.data.frame(freqs)
     if(nrow(freqs) == 0) return(NULL)
+    
     wordcloud2(freqs, size = 0.6, color = "random-light", backgroundColor = "#2c3e50")
   })
   
+  # ====================================================================
+  # HEATMAP 2: KEYNESS (Muerte Cruzada)
+  # ====================================================================
   output$nlp_heatmap_unique <- renderPlotly({
     df_global <- curated_data()
     req(input$unique_group_col, input$unique_group_val)
-    if(!"Descripción" %in% names(df_global) || !input$unique_group_col %in% names(df_global)) return(NULL)
     
-    user_stops <- input$custom_stopwords %>% str_split(",") %>% unlist() %>% str_trim() %>% tolower()
-    custom_stops <- data.frame(word = unique(user_stops))
-    tokens_grouped <- df_global %>% select(all_of(c(input$unique_group_col, "Descripción"))) %>% rename(Grupo = !!sym(input$unique_group_col)) %>% filter(!is.na(Grupo) & Grupo != "") %>% unnest_tokens(word, Descripción) %>% anti_join(custom_stops, by = "word") %>% filter(nchar(word) > 3) %>% filter(!str_detect(word, "^[0-9]+$"))
+    idx_desc <- grep("descripci", tolower(names(df_global)))
+    if(length(idx_desc) == 0 || !input$unique_group_col %in% names(df_global)) return(NULL)
     
-    tokens_grouped <- filtrar_verbos(tokens_grouped, input$verb_filter) # APLICACIÓN DE FILTRO DE VERBO
+    nombre_col_real <- names(df_global)[idx_desc[1]]
     
-    word_distribution <- tokens_grouped %>% group_by(word) %>% summarise(n_grupos = n_distinct(Grupo))
-    exclusive_words <- word_distribution %>% filter(n_grupos == 1) %>% pull(word)
-    final_tokens <- tokens_grouped %>% filter(Grupo == input$unique_group_val) %>% filter(word %in% exclusive_words)
+    tokens_grouped <- generar_tokens(df_global, nombre_col_real, input$unique_group_col, input$custom_stopwords, input$verb_filter, input$ngram_mode)
+    if(nrow(tokens_grouped) == 0) return(NULL)
     
-    top_words <- final_tokens %>% count(word, sort = TRUE) %>% head(20) %>% pull(word)
+    word_counts <- tokens_grouped %>% count(Grupo, word)
+    if(nrow(word_counts) == 0) return(NULL)
+    
+    mi_dfm <- word_counts %>% cast_dfm(document = Grupo, term = word, value = n)
+    
+    stat_keyness <- tryCatch({
+      textstat_keyness(mi_dfm, target = as.character(input$unique_group_val))
+    }, error = function(e) { return(NULL) })
+    
+    if(is.null(stat_keyness) || nrow(stat_keyness) == 0) return(NULL)
+    
+    top_words <- stat_keyness %>% filter(chi2 > 0 & p < 0.05) %>% arrange(desc(chi2)) %>% head(20) %>% pull(feature)
     if(length(top_words) == 0) return(NULL)
     
-    heat_df <- final_tokens %>% filter(word %in% top_words) %>% count(Grupo, word) %>% tidyr::complete(Grupo, word, fill = list(n = 0))
+    heat_df <- tokens_grouped %>% filter(word %in% top_words) %>% count(Grupo, word) %>% tidyr::complete(Grupo, word, fill = list(n = 0))
     plot_ly(heat_df, x = ~Grupo, y = ~word, z = ~n, type = "heatmap", colors = colorRamp(c("#fdfbfb", "#e74c3c"))) %>%
-      layout(title = paste("Frecuencia Palabras Exclusivas:", input$unique_group_val), xaxis = list(title = input$unique_group_col), yaxis = list(title = "Palabra"))
+      layout(title = paste("Keyness (Distribución real):", input$unique_group_val), 
+             xaxis = list(title = input$unique_group_col), yaxis = list(title = "Término Clave"))
   })
   
-  # === SANKEY PLOT (CON LÓGICA REFINADA NA/NC) ===
+  # === SANKEY PLOT ===
   output$sankey_plot <- renderPlotly({
     df <- viz_data()
     v_orig <- input$sankey_source
@@ -736,7 +833,6 @@ server <- function(input, output, session) {
     if(is.null(df) || nrow(df) == 0 || is.null(v_orig) || is.null(v_dest)) return(NULL)
     if(!(v_orig %in% names(df) && v_dest %in% names(df))) return(NULL)
     
-    # 1. Limpieza y Agrupamiento de Nulos y Vacíos
     sankey_df <- df %>% select(all_of(c(v_orig, v_dest))) %>%
       mutate(across(everything(), as.character)) %>%
       mutate(across(everything(), ~ ifelse(is.na(.) | trimws(.) == "" | tolower(trimws(.)) %in% c("na", "nc", "n/a", "sin informacion"), "NA/NC", trimws(.)))) %>%
@@ -744,7 +840,6 @@ server <- function(input, output, session) {
       tidyr::separate_rows(!!sym(v_dest), sep = ";\\s*") %>%
       mutate(across(everything(), ~ ifelse(is.na(.) | trimws(.) == "", "NA/NC", trimws(.))))
     
-    # 2. Filtrar exclusión NA/NC si la casilla está DESMARCADA
     if(is.null(input$show_na_sankey) || !input$show_na_sankey) {
       sankey_df <- sankey_df %>% filter(!!sym(v_orig) != "NA/NC", !!sym(v_dest) != "NA/NC")
     }
@@ -801,19 +896,17 @@ server <- function(input, output, session) {
             link = list(source = sankey_df$source, target = sankey_df$target, value = sankey_df$value))
   })
   
-  # === FREQUENCY PLOT (CON LÓGICA REFINADA NA/NC) ===
+  # === FREQUENCY PLOT ===
   output$freq_plot <- renderPlotly({
     df <- viz_data()
     req(input$freq_col %in% names(df))
     
-    # 1. Limpieza y Agrupamiento
     freq_df <- df %>% select(all_of(input$freq_col)) %>%
       mutate(Categoria = as.character(!!sym(input$freq_col))) %>%
       mutate(Categoria = ifelse(is.na(Categoria) | trimws(Categoria) == "" | tolower(trimws(Categoria)) %in% c("na", "nc", "n/a", "sin informacion"), "NA/NC", trimws(Categoria))) %>%
       tidyr::separate_rows(Categoria, sep = ";\\s*") %>%
       mutate(Categoria = ifelse(is.na(Categoria) | trimws(Categoria) == "", "NA/NC", trimws(Categoria)))
     
-    # 2. Filtrar NA/NC si la casilla está DESMARCADA
     if (is.null(input$show_na) || !input$show_na) {
       freq_df <- freq_df %>% filter(Categoria != "NA/NC")
     } 
@@ -831,6 +924,7 @@ server <- function(input, output, session) {
       layout(xaxis = list(title = "Cantidad de Medidas"), yaxis = list(title = input$freq_col), margin = list(l = 150))
   })
   
+  # === NETWORK PLOT ===
   output$network_plot <- renderVisNetwork({
     df <- viz_data()
     actor_col <- "Colaboradores externos"
