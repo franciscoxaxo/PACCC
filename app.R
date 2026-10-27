@@ -41,6 +41,45 @@ falsos_verbos <- c(
 )
 
 # ==============================================================================
+# DICCIONARIO DE ZONAS RM (CON CÓDIGOS INE PARA EVITAR ERRORES DE TEXTO)
+# ==============================================================================
+zonas_rm <- data.frame(
+  codigo_comuna = c(
+    "13101", "13104", "13107", "13108", "13125", "13127", 
+    "13123", "13114", "13132", "13115", "13120", "13113", 
+    "13118", "13122", "13110",                            
+    "13130", "13129", "13121", "13116", "13109", "13131", "13111", "13105", "13112", 
+    "13106", "13102", "13119",                            
+    "13126", "13117", "13124", "13103", "13128",          
+    "13301", "13302", "13303",                            
+    "13201", "13202", "13203",                            
+    "13401", "13402", "13403", "13404",                   
+    "13501", "13502", "13503", "13504", "13505",          
+    "13601", "13602", "13603", "13604", "13605"           
+  ),
+  nombre_comuna = c(
+    "Santiago", "Conchalí", "Huechuraba", "Independencia", "Quilicura", "Recoleta",
+    "Providencia", "Las Condes", "Vitacura", "Lo Barnechea", "Ñuñoa", "La Reina",
+    "Macul", "Peñalolén", "La Florida",
+    "San Miguel", "San Joaquín", "Pedro Aguirre Cerda", "Lo Espejo", "La Cisterna", "San Ramón", "La Granja", "El Bosque", "La Pintana",
+    "Estación Central", "Cerrillos", "Maipú",
+    "Quinta Normal", "Lo Prado", "Pudahuel", "Cerro Navia", "Renca",
+    "Colina", "Lampa", "Tiltil",
+    "Puente Alto", "Pirque", "San José de Maipo",
+    "San Bernardo", "Buin", "Paine", "Calera de Tango",
+    "Melipilla", "Alhué", "Curacaví", "María Pinto", "San Pedro",
+    "Talagante", "El Monte", "Isla de Maipo", "Padre Hurtado", "Peñaflor"
+  ),
+  zona = c(
+    "Centro", rep("Norte", 5), rep("Nororiente", 6), rep("Suroriente", 3),
+    rep("Sur", 9), rep("Surponiente", 3), rep("Norponiente", 5),
+    rep("Chacabuco", 3), rep("Cordillera", 3), rep("Maipo", 4),
+    rep("Melipilla", 5), rep("Talagante", 5)
+  ),
+  stringsAsFactors = FALSE
+)
+
+# ==============================================================================
 # FUNCIONES DE LECTURA ROBUSTA
 # ==============================================================================
 leer_csv_robusto <- function(ruta) {
@@ -130,6 +169,7 @@ resolve_metadata <- function(vals, rule) {
 # ==============================================================================
 ui <- page_sidebar(
   shinyjs::useShinyjs(),
+  withMathJax(), # Carga el soporte inicial para fórmulas matemáticas
   title = "Curador y Reclasificador PACCC",
   theme = bs_theme(version = 5, bootswatch = "flatly"), 
   tags$head(tags$style(HTML(".jump-box input { height: 30px; text-align: center; } .leaflet-container { background: #ffffff !important; }"))),
@@ -276,7 +316,10 @@ ui <- page_sidebar(
                   conditionalPanel(condition = "input.viz_mode == 'corrmatrix'", hr(), h6("Configuración de Correlaciones"),
                                    selectizeInput("corr_cols", "Variables a cruzar:", choices = NULL, multiple = TRUE),
                                    numericInput("corr_min_freq", "Frecuencia mínima (casos por categoría):", value = 3, min = 2),
-                                   sliderInput("corr_threshold", "Ocultar si correlación máxima es menor a:", min = 0.0, max = 0.8, value = 0.15, step = 0.05))
+                                   sliderInput("corr_threshold", "Ocultar si correlación máxima es menor a:", min = 0.0, max = 0.8, value = 0.15, step = 0.05)),
+                  
+                  conditionalPanel(condition = "input.viz_mode == 'map'", hr(), h6("Configuración de Mapa"),
+                                   checkboxInput("map_always_labels", "Etiquetas siempre visibles", value = FALSE))
                 ),
                 
                 # =========================================================
@@ -332,13 +375,16 @@ ui <- page_sidebar(
                   plotlyOutput("freq_plot", height = "650px")
                 )))),
                 
-                conditionalPanel(condition = "input.viz_mode == 'network'", fluidRow(column(12, card(
-                  card_header(
-                    div(style="display: flex; justify-content: space-between; align-items: center;",
-                        span("Red de Colaboradores Externos"), downloadButton("dl_network", "Descargar PNG", class="btn-sm btn-outline-primary")
-                    )),
-                  visNetworkOutput("network_plot", height = "650px")
-                )))),
+                # MÓDULO RED DE COLABORADORES CON INDICADOR DE SIMBIOSIS
+                conditionalPanel(condition = "input.viz_mode == 'network'", 
+                                 fluidRow(column(12, uiOutput("network_kpi_ui"))),
+                                 fluidRow(column(12, card(
+                                   card_header(
+                                     div(style="display: flex; justify-content: space-between; align-items: center;",
+                                         span("Red de Colaboradores Externos"), downloadButton("dl_network", "Descargar PNG", class="btn-sm btn-outline-primary")
+                                     )),
+                                   visNetworkOutput("network_plot", height = "650px")
+                                 )))),
                 
                 conditionalPanel(condition = "input.viz_mode == 'chord'", fluidRow(column(12, card(
                   card_header(
@@ -1048,7 +1094,91 @@ server <- function(input, output, session) {
       config(displayModeBar = FALSE)
   })
   
-  # -- Network --
+  # -- Network & Simbiosis KPI --
+  network_kpi_data <- reactive({
+    df <- viz_data()
+    actor_col <- "Colaboradores externos"
+    req("Plan" %in% names(df), actor_col %in% names(df))
+    
+    p_totales <- n_distinct(df$Plan, na.rm = TRUE)
+    if(p_totales == 0) return(NULL)
+    
+    net_df <- df %>% 
+      select(Plan, all_of(actor_col)) %>% 
+      mutate(Actor = as.character(!!sym(actor_col))) %>%
+      mutate(Actor = ifelse(is.na(Actor) | trimws(Actor) == "" | tolower(trimws(Actor)) %in% c("na", "nc", "n/a", "sin informacion"), NA, trimws(Actor)))
+    
+    planes_con_actores <- net_df %>% filter(!is.na(Actor)) %>% pull(Plan) %>% unique()
+    p_aislados <- p_totales - length(planes_con_actores)
+    
+    edges_df <- net_df %>% 
+      filter(!is.na(Actor)) %>% 
+      tidyr::separate_rows(Actor, sep = ";\\s*") %>% 
+      mutate(Actor = str_to_title(trimws(Actor))) %>% 
+      filter(Actor != "")
+    
+    e_totales <- nrow(edges_df)
+    
+    actores_counts <- edges_df %>% group_by(Actor) %>% summarise(n_planes = n_distinct(Plan))
+    actores_compartidos <- actores_counts %>% filter(n_planes > 1) %>% pull(Actor)
+    e_compartidos <- edges_df %>% filter(Actor %in% actores_compartidos) %>% nrow()
+    
+    if(e_totales > 0) {
+      peso_red <- e_compartidos / e_totales
+      penalizacion <- 1 - (p_aislados / p_totales)
+      tasa <- peso_red * penalizacion
+    } else {
+      tasa <- 0
+    }
+    
+    list(
+      tasa = tasa,
+      e_totales = e_totales,
+      e_compartidos = e_compartidos,
+      p_totales = p_totales,
+      p_aislados = p_aislados
+    )
+  })
+  
+  # ENVOLVEMOS EL RESULTADO DINÁMICO CON withMathJax()
+  output$network_kpi_ui <- renderUI({
+    res <- network_kpi_data()
+    req(res)
+    
+    withMathJax(
+      card(
+        class = "bg-light mb-3",
+        card_header(
+          class = "bg-dark text-white", 
+          icon("project-diagram"), 
+          " Índice de Integración Bipartita (Tasa de Simbiosis)"
+        ),
+        card_body(
+          fluidRow(
+            column(4, 
+                   div(style = "display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%;",
+                       h2(paste0(round(res$tasa * 100, 1), "%"), class = "text-primary", style="font-size: 3.5rem; font-weight: bold; margin-bottom: 0;"),
+                       p(class="text-muted mt-2", style="font-size: 1.1rem;", "Nivel de interdependencia global")
+                   )
+            ),
+            column(8,
+                   p("Esta métrica evalúa la cohesión del ecosistema midiendo la estructura de núcleo compartido vs. periferia aislada, aplicando una penalización por fragmentación matemática (Wasserman & Faust, 1994; Latapy et al., 2008)."),
+                   div(style = "background: #fff; padding: 10px; border-radius: 5px; border: 1px solid #ddd; text-align: center; margin-bottom: 15px;",
+                       "$$Tasa = \\left( \\frac{\\sum E_{comp}}{\\sum E_{tot}} \\right) \\times \\left( 1 - \\frac{P_{aislados}}{P_{tot}} \\right)$$"
+                   ),
+                   tags$ul(style="font-size: 0.9em; color: #444;",
+                           tags$li(strong(paste0("E_comp (", res$e_compartidos, "):")), " Número de colaboraciones sostenidas por agentes que conectan múltiples planes (>1 plan)."),
+                           tags$li(strong(paste0("E_tot (", res$e_totales, "):")), " Número total de relaciones de colaboración declaradas en la red."),
+                           tags$li(strong(paste0("P_aislados (", res$p_aislados, "):")), " Cantidad de planes PACCC que no reportan ningún colaborador externo (Silos o Vacíos)."),
+                           tags$li(strong(paste0("P_tot (", res$p_totales, "):")), " Total de planes PACCC actualmente bajo evaluación.")
+                   )
+            )
+          )
+        )
+      )
+    )
+  })
+  
   network_data_reac <- reactive({
     df <- viz_data()
     actor_col <- "Colaboradores externos"
@@ -1249,35 +1379,97 @@ server <- function(input, output, session) {
       config(displayModeBar = FALSE)
   })
   
-  # -- MAPA TERRITORIAL --
+  # -- MAPA TERRITORIAL (Agrupado por Zonas y Provincias) --
   map_data_reac <- reactive({
     df <- viz_data()
     req("Plan" %in% names(df))
-    df %>% count(Plan, name = "cantidad_medidas")
+    
+    # Función para estandarizar textos y evitar NAs en el cruce de datos del usuario
+    normalizar <- function(x) {
+      tolower(chartr("áéíóúüñÁÉÍÓÚÜÑ", "aeiouunAEIOUUN", trimws(x)))
+    }
+    
+    # 1. Conteo de medidas por comuna presentes en el dataset del usuario
+    df_counts <- df %>% 
+      count(Plan, name = "cantidad_medidas") %>%
+      mutate(Plan_norm = normalizar(Plan))
+    
+    # 2. Cruce con las 52 comunas de la RM, calcular comunas que reportan y el promedio sobre ellas
+    zonas_calc <- zonas_rm %>%
+      mutate(nombre_norm = normalizar(nombre_comuna)) %>%
+      left_join(df_counts, by = c("nombre_norm" = "Plan_norm")) %>%
+      mutate(cantidad_medidas = ifelse(is.na(cantidad_medidas), 0, as.numeric(cantidad_medidas))) %>%
+      group_by(zona) %>%
+      summarise(
+        total_comunas = n(),
+        comunas_reportan = sum(cantidad_medidas > 0, na.rm = TRUE),
+        total_medidas = sum(cantidad_medidas, na.rm = TRUE),
+        promedio_medidas = ifelse(comunas_reportan > 0, total_medidas / comunas_reportan, 0),
+        .groups = "drop"
+      )
+    
+    return(zonas_calc)
   })
   
   output$map_plot <- renderLeaflet({
-    datos_frecuencia <- map_data_reac()
-    req(datos_frecuencia)
+    datos_zona <- map_data_reac()
+    req(datos_zona)
     
+    # 1. Obtener geometrías de las comunas RM y cruzar con diccionario de zonas mediante CODIGO_COMUNA
+    # Esto garantiza el cruce espacial sin depender de nombres y evita el bloque NA
     mapa_rm <- mapa_comunas %>%
       filter(codigo_region == "13") %>%
+      left_join(zonas_rm, by = "codigo_comuna") %>%
       st_as_sf() %>%
       st_transform(crs = 4326) %>%
-      left_join(codigos_territoriales %>% select(codigo_comuna, nombre_oficial = nombre_comuna), by = "codigo_comuna")
+      filter(!is.na(zona)) # Salvaguarda contra geometrías huérfanas
     
-    mapa_rm_datos <- mapa_rm %>%
-      left_join(datos_frecuencia, by = c("nombre_oficial" = "Plan")) %>%
-      mutate(etiqueta = paste0("<b>", nombre_oficial, "</b><br>Cantidad de Medidas: ", ifelse(is.na(cantidad_medidas), "0 (Sin datos)", cantidad_medidas)))
+    # 2. Disolver fronteras internas: Agrupar por zona y unir polígonos
+    mapa_zonas <- mapa_rm %>%
+      group_by(zona) %>%
+      summarise(geometry = st_union(geometry), .groups = "drop")
     
-    paleta <- colorNumeric(palette = "Greens", domain = mapa_rm_datos$cantidad_medidas, na.color = "#e8e8e8")
-    valores_leyenda <- na.omit(mapa_rm_datos$cantidad_medidas)
+    # 3. Unir los cálculos numéricos al mapa disuelto y generar la etiqueta
+    mapa_zonas_datos <- mapa_zonas %>%
+      left_join(datos_zona, by = "zona") %>%
+      mutate(
+        etiqueta = paste0(
+          "<div style='font-size: 14px;'>",
+          "<b>Zona/Provincia: ", zona, "</b><br><hr style='margin: 4px 0;'>",
+          "Comunas: ", comunas_reportan, "<br>",
+          "Medidas: ", round(promedio_medidas, 2), "<br>",
+          "Total de Comunas: ", total_comunas,
+          "</div>"
+        )
+      )
     
-    leaflet(mapa_rm_datos) %>%
-      addPolygons(fillColor = ~paleta(cantidad_medidas), weight = 1.2, color = "#888888", fillOpacity = 0.9,
-                  highlightOptions = highlightOptions(weight = 3, color = "#000000", bringToFront = TRUE),
-                  label = ~lapply(etiqueta, HTML), labelOptions = labelOptions(style = list("font-weight" = "normal", padding = "8px 12px", "box-shadow" = "3px 3px rgba(0,0,0,0.25)"), textsize = "13px", direction = "auto")) %>%
-      addLegend(pal = paleta, values = valores_leyenda, title = "Cantidad de<br>Medidas", position = "bottomright")
+    # 4. Crear paleta basada en el PROMEDIO
+    paleta <- colorNumeric(palette = "Greens", domain = mapa_zonas_datos$promedio_medidas, na.color = "#e8e8e8")
+    valores_leyenda <- na.omit(mapa_zonas_datos$promedio_medidas)
+    
+    # Evaluar si el usuario activó "Etiquetas siempre visibles"
+    etiquetas_visibles <- if (!is.null(input$map_always_labels) && input$map_always_labels) TRUE else FALSE
+    
+    # 5. Renderizar Leaflet interactivo
+    leaflet(mapa_zonas_datos) %>%
+      addPolygons(
+        fillColor = ~paleta(promedio_medidas), 
+        weight = 1.5, color = "#444444", fillOpacity = 0.85,
+        highlightOptions = highlightOptions(weight = 3, color = "#000000", bringToFront = TRUE),
+        label = ~lapply(etiqueta, HTML), 
+        labelOptions = labelOptions(
+          noHide = etiquetas_visibles,
+          style = list("font-weight" = "normal", padding = "8px", "box-shadow" = "3px 3px rgba(0,0,0,0.25)"), 
+          textsize = "13px", 
+          direction = "auto"
+        )
+      ) %>%
+      addLegend(
+        pal = paleta, 
+        values = valores_leyenda, 
+        title = "Promedio de<br>Medidas<br>(Comunas Activas)", 
+        position = "bottomright"
+      )
   })
   
   # ====================================================================
