@@ -8,6 +8,9 @@ paquetes_requeridos <- c("shiny", "bslib", "DT", "dplyr", "tidytext",
                          "quanteda.textstats", "htmlwidgets", "webshot2",
                          "leaflet", "sf", "chilemapas", "writexl") 
 
+# Descomentar si necesitas instalar las librerías la primera vez:
+# lapply(paquetes_requeridos, function(x) if(!require(x, character.only = TRUE)) install.packages(x))
+
 library(shiny)
 library(bslib)
 library(DT)
@@ -24,7 +27,6 @@ library(quanteda)
 library(quanteda.textstats)
 library(htmlwidgets)
 library(webshot2)
-library(chorddiag)
 library(leaflet)
 library(sf)
 library(chilemapas)
@@ -169,10 +171,13 @@ resolve_metadata <- function(vals, rule) {
 # ==============================================================================
 ui <- page_sidebar(
   shinyjs::useShinyjs(),
-  withMathJax(), # Carga el soporte inicial para fórmulas matemáticas
+  withMathJax(),
   title = "Curador y Reclasificador PACCC",
   theme = bs_theme(version = 5, bootswatch = "flatly"), 
-  tags$head(tags$style(HTML(".jump-box input { height: 30px; text-align: center; } .leaflet-container { background: #ffffff !important; }"))),
+  
+  tags$head(
+    tags$style(HTML(".jump-box input { height: 30px; text-align: center; } .leaflet-container { background: #ffffff !important; }"))
+  ),
   
   sidebar = sidebar(
     title = "Gestor de Proyectos",
@@ -206,7 +211,39 @@ ui <- page_sidebar(
   
   navset_card_underline(
     title = "Flujo de Trabajo Colaborativo",
+    
+    nav_panel("Capa 0: Info General", icon = icon("info-circle"), br(),
+              fluidRow(
+                column(3, card(card_header("Gestión de Columnas", class = "bg-primary text-white"), card_body(
+                  textInput("new_info_col", "Nombre de Columna:", placeholder = "Ej: Presupuesto"),
+                  selectInput("new_info_type", "Tipo de Dato:", choices = c("Texto", "Número", "Dinero", "Fecha", "Lista")),
+                  
+                  conditionalPanel(
+                    condition = "input.new_info_type == 'Lista'",
+                    textInput("new_info_options", "Opciones de Lista (sep. por punto y coma):", placeholder = "Alto; Medio; Bajo")
+                  ),
+                  conditionalPanel(
+                    condition = "input.new_info_type == 'Número' || input.new_info_type == 'Dinero'",
+                    textInput("new_info_nulls", "Textos aceptados en esta col. (sep. por ;):", placeholder = "S/I; Comprometido")
+                  ),
+                  
+                  actionButton("add_info_col_btn", "Guardar / Actualizar Columna", class = "btn-info text-white", width = "100%", icon = icon("plus")),
+                  hr(),
+                  actionButton("save_info_btn", "Guardar Datos (CSV)", class = "btn-success", width = "100%", icon = icon("save")),
+                  br(),
+                  p(style="font-size: 0.85em; color: #666; margin-top: 15px;", 
+                    "Tip: Haz doble clic en una celda de la tabla para editar."),
+                  p(style="font-size: 0.85em; color: #2c3e50; font-weight: bold;", 
+                    "💡 Dinamismo: Si agregas valores directo en el CSV/Excel, o si escribes aquí el nombre de una Lista existente y le pones nuevas opciones, la app actualizará los menús automáticamente.")
+                ))),
+                column(9, card(card_header("Información de los Planes (Editable)", class = "bg-dark text-white"), card_body(
+                  DTOutput("info_gral_table")
+                )))
+              )
+    ),
+    
     nav_panel("Capa 1: Base Bruta", icon = icon("table"), DTOutput("results_table")),
+    
     nav_panel("Capa 1.5: Setear Reclasificación", icon = icon("list-check"), br(),
               fluidRow(
                 column(5, card(card_header("1. Editar o Crear Variable", class = "bg-primary text-white"), card_body(
@@ -233,7 +270,9 @@ ui <- page_sidebar(
                 )))
               )
     ),
+    
     nav_panel("Capa 2: Curación de Medidas", icon = icon("user-edit"), br(), uiOutput("curation_ui")),
+    
     nav_panel("Capa 2.5: Fusión de Evaluaciones", icon = icon("handshake"), br(),
               fluidRow(
                 column(4, card(card_header("Subir Evaluaciones"), card_body(
@@ -246,6 +285,7 @@ ui <- page_sidebar(
                 )))
               )
     ),
+    
     nav_panel("Capa 3: Análisis Visual", icon = icon("chart-pie"), br(),
               layout_sidebar(
                 sidebar = sidebar(
@@ -253,46 +293,40 @@ ui <- page_sidebar(
                   selectizeInput("plan_filter", "Filtrar por Plan(es):", choices = NULL, multiple = TRUE, options = list(placeholder = 'Todos los planes')), 
                   hr(),
                   
-                  # =========================================================================
-                  # BOTÓN DE EXPORTACIÓN A EXCEL DE LOS DATOS VISUALIZADOS ACTUALMENTE
-                  # =========================================================================
                   downloadButton("dl_data_excel", "📥 Descargar Excel (Datos)", class="btn-success text-white w-100", style="font-weight: bold; margin-bottom: 15px;"),
                   hr(),
                   
                   selectInput("viz_mode", "Seleccionar Gráfico:", 
-                              choices = c("1. Nube de Palabras Global" = "wordcloud", 
-                                          "2. Nube de Palabras Únicas (Keyness)" = "wordcloud_unique", 
-                                          "3. Flujo Dinámico de Relaciones (Sankey)" = "sankey", 
-                                          "4. Gráfico de Frecuencias" = "freq", 
-                                          "5. Red Plan vs Actores" = "network",
-                                          "6. Diagrama de Cuerdas (Co-ocurrencia)" = "chord",
-                                          "7. Correlograma (Matriz de Correlaciones)" = "corrmatrix",
-                                          "8. Mapa Territorial RM (Frecuencia)" = "map")), hr(),
+                              choices = c("1. Análisis de Texto (NLP)" = "nlp", 
+                                          "2. Distribución de Frecuencias" = "freq", 
+                                          "3. Flujo Dinámico (Sankey)" = "sankey", 
+                                          "4. Red Plan vs Actores" = "network",
+                                          "5. Matriz de Correlaciones" = "corrmatrix",
+                                          "6. Mapa Territorial RM" = "map")), hr(),
                   
-                  conditionalPanel(condition = "input.viz_mode == 'wordcloud'",
-                                   radioButtons("wc_count_mode", "Modo de Cálculo:", 
-                                                choices = c("Ponderado por Dispersión (Anti-sesgo)" = "pond", "Frecuencia Absoluta (Clásico)" = "abs"), 
-                                                selected = "pond"),
-                                   hr()),
-                  
-                  # === FILTROS NLP ===
-                  conditionalPanel(condition = "input.viz_mode == 'wordcloud' || input.viz_mode == 'wordcloud_unique'",
-                                   radioButtons("wc_view_mode", "Modo de Vista:", choices = c("Nube de Palabras" = "cloud", "Heatmap (Plan vs Palabra)" = "heatmap"), inline = TRUE),
+                  conditionalPanel(condition = "input.viz_mode == 'nlp'",
+                                   radioButtons("nlp_type", "Tipo de Nube:", choices = c("1. Frecuencia Global" = "global", "2. Exclusividad (Keyness)" = "unique")),
                                    hr(),
-                                   
                                    radioButtons("ngram_mode", "Composición de Palabras:", 
                                                 choices = c("Solo Palabras (Unigramas)" = "unigrams", 
                                                             "Pares (Bigramas)" = "bigrams", 
                                                             "Ambos mezclados" = "both"), 
                                                 selected = "unigrams"),
                                    hr(),
-                                   
                                    radioButtons("verb_filter", "Filtrar acciones / verbos:", 
                                                 choices = c("Todas las palabras" = "all", "Solo verbos (infinitivos)" = "only_verbs", "Excluir verbos (infinitivos)" = "no_verbs"), selected = "all"),
-                                   h6("Filtros de Exclusión"), textInput("custom_stopwords", "Excluir palabras:", value = "para, el, la,esta,busca,medida,estos,este,sobre,tiene,estas,asimismo,entre,través,manera, los, las, con, de, en, del, a, y, o, por, se, su, sus, como, al, una, un, que")),
-                  
-                  conditionalPanel(condition = "input.viz_mode == 'wordcloud_unique'", hr(), h6("Análisis Keyness"),
-                                   selectInput("unique_group_col", "Agrupar por:", choices = c("Plan", "Eje", "Área")), selectInput("unique_group_val", "Mostrar exclusivas de:", choices = NULL)),
+                                   h6("Filtros de Exclusión"), 
+                                   textInput("custom_stopwords", "Excluir palabras:", value = "para, el, la,esta,busca,medida,estos,este,sobre,tiene,estas,asimismo,entre,través,manera, los, las, con, de, en, del, a, y, o, por, se, su, sus, como, al, una, un, que"),
+                                   
+                                   conditionalPanel(condition = "input.nlp_type == 'global'", hr(),
+                                                    radioButtons("wc_count_mode", "Modo de Cálculo:", choices = c("Ponderado por Dispersión (Anti-sesgo)" = "pond", "Frecuencia Absoluta (Clásico)" = "abs"), selected = "pond")
+                                   ),
+                                   
+                                   conditionalPanel(condition = "input.nlp_type == 'unique'", hr(), h6("Configuración Keyness"),
+                                                    selectInput("unique_group_col", "Agrupar por:", choices = c("Plan", "Eje", "Área")), 
+                                                    selectInput("unique_group_val", "Mostrar exclusivas de:", choices = NULL)
+                                   )
+                  ),
                   
                   conditionalPanel(condition = "input.viz_mode == 'sankey'", hr(), h6("Ejes Sankey"),
                                    selectInput("sankey_source", "Origen:", choices = NULL), selectInput("sankey_target", "Destino:", choices = NULL),
@@ -305,13 +339,9 @@ ui <- page_sidebar(
                                    checkboxInput("show_na", "Incluir vacíos/nulos (como 'NA/NC')", value = FALSE)),
                   
                   conditionalPanel(condition = "input.viz_mode == 'network'", hr(), h6("Configuración de Red"),
-                                   numericInput("top_actors_n", "Cantidad Máxima de Actores (Top):", value = 10, min = 1),
-                                   checkboxInput("shared_actors_only", "Mostrar SOLO actores compartidos (>1 Plan)", value = FALSE),
-                                   radioButtons("net_dir", "Estructura Visual:", choices = c("Orgánico (Fuerza central)" = "force", "Jerarquía: Plan -> Actores" = "LR", "Jerarquía: Actores -> Plan" = "RL"), selected = "force")),
-                  
-                  conditionalPanel(condition = "input.viz_mode == 'chord'", hr(), h6("Configuración de Cuerdas"),
-                                   selectInput("chord_col", "Variable a analizar (con múltiples datos por celda):", choices = NULL),
-                                   checkboxInput("chord_show_na", "Incluir vacíos/nulos", value = FALSE)),
+                                   selectizeInput("network_search_actor", "🔍 Buscar/Filtrar por Actor:", choices = NULL, options = list(placeholder = 'Escriba un actor...')),
+                                   numericInput("top_actors_n", "Cantidad Máxima de Actores (Top):", value = 15, min = 1),
+                                   checkboxInput("shared_actors_only", "Mostrar SOLO actores compartidos (>1 Plan)", value = FALSE)),
                   
                   conditionalPanel(condition = "input.viz_mode == 'corrmatrix'", hr(), h6("Configuración de Correlaciones"),
                                    selectizeInput("corr_cols", "Variables a cruzar:", choices = NULL, multiple = TRUE),
@@ -319,44 +349,29 @@ ui <- page_sidebar(
                                    sliderInput("corr_threshold", "Ocultar si correlación máxima es menor a:", min = 0.0, max = 0.8, value = 0.15, step = 0.05)),
                   
                   conditionalPanel(condition = "input.viz_mode == 'map'", hr(), h6("Configuración de Mapa"),
+                                   selectInput("map_var", "Variable a Mapear:", choices = c("Cantidad de Medidas" = "medidas")),
+                                   radioButtons("map_grouping", "Agrupar el territorio por:", 
+                                                choices = c("1. Zonas/Provincias (Promedios/Resumen)" = "zona", "2. Comunas (Medidas exactas)" = "comuna"), 
+                                                selected = "zona"),
+                                   radioButtons("map_scale", "Escala de Colores (Numérica):", 
+                                                choices = c("Lineal" = "lin", "Logarítmica" = "log"), 
+                                                selected = "lin", inline = TRUE),
                                    checkboxInput("map_always_labels", "Etiquetas siempre visibles", value = FALSE))
                 ),
                 
                 # =========================================================
-                # VISTAS CON BOTONES DE DESCARGA PNG
+                # VISTAS (MAIN PANELS)
                 # =========================================================
-                conditionalPanel(condition = "input.viz_mode == 'wordcloud'", 
-                                 fluidRow(column(12, card(
-                                   card_header(
-                                     div(style="display: flex; justify-content: space-between; align-items: center;",
-                                         span("Análisis de Texto Global"),
-                                         div(
-                                           conditionalPanel("input.wc_view_mode == 'cloud'", downloadButton("dl_wc_global", "Descargar PNG", class="btn-sm btn-outline-primary")),
-                                           conditionalPanel("input.wc_view_mode == 'heatmap'", downloadButton("dl_hm_global", "Descargar PNG", class="btn-sm btn-outline-primary"))
-                                         )
-                                     )
-                                   ), 
-                                   card_body(
-                                     conditionalPanel("input.wc_view_mode == 'cloud'", wordcloud2Output("nlp_wordcloud", height = "650px")),
-                                     conditionalPanel("input.wc_view_mode == 'heatmap'", plotlyOutput("nlp_heatmap", height = "650px"))
-                                   )
-                                 )))),
                 
-                conditionalPanel(condition = "input.viz_mode == 'wordcloud_unique'", 
+                conditionalPanel(condition = "input.viz_mode == 'nlp'", 
                                  fluidRow(column(12, card(
                                    card_header(
                                      div(style="display: flex; justify-content: space-between; align-items: center;",
-                                         span("Vocabulario Exclusivo (Keyness Chi-Cuadrado)"),
-                                         div(
-                                           conditionalPanel("input.wc_view_mode == 'cloud'", downloadButton("dl_wc_unique", "Descargar PNG", class="btn-sm btn-outline-primary")),
-                                           conditionalPanel("input.wc_view_mode == 'heatmap'", downloadButton("dl_hm_unique", "Descargar PNG", class="btn-sm btn-outline-primary"))
-                                         )
+                                         span(textOutput("nlp_title_ui", inline=TRUE)),
+                                         downloadButton("dl_nlp", "Descargar PNG", class="btn-sm btn-outline-primary")
                                      )
                                    ), 
-                                   card_body(
-                                     conditionalPanel("input.wc_view_mode == 'cloud'", wordcloud2Output("nlp_wordcloud_unique", height = "650px")),
-                                     conditionalPanel("input.wc_view_mode == 'heatmap'", plotlyOutput("nlp_heatmap_unique", height = "650px"))
-                                   )
+                                   card_body(wordcloud2Output("nlp_wordcloud_ui", height = "650px"))
                                  )))),
                 
                 conditionalPanel(condition = "input.viz_mode == 'sankey'", fluidRow(column(12, card(
@@ -375,7 +390,6 @@ ui <- page_sidebar(
                   plotlyOutput("freq_plot", height = "650px")
                 )))),
                 
-                # MÓDULO RED DE COLABORADORES CON INDICADOR DE SIMBIOSIS
                 conditionalPanel(condition = "input.viz_mode == 'network'", 
                                  fluidRow(column(12, uiOutput("network_kpi_ui"))),
                                  fluidRow(column(12, card(
@@ -386,26 +400,13 @@ ui <- page_sidebar(
                                    visNetworkOutput("network_plot", height = "650px")
                                  )))),
                 
-                conditionalPanel(condition = "input.viz_mode == 'chord'", fluidRow(column(12, card(
-                  card_header(
-                    div(style="display: flex; justify-content: space-between; align-items: center;",
-                        span("Diagrama de Cuerdas (Co-ocurrencia en misma celda)"), 
-                        downloadButton("dl_chord", "Descargar PNG", class="btn-sm btn-outline-primary")
-                    )),
-                  card_body(
-                    chorddiagOutput("chord_plot", height = "650px")
-                  )
-                )))),
-                
                 conditionalPanel(condition = "input.viz_mode == 'corrmatrix'", fluidRow(column(12, card(
                   card_header(
                     div(style="display: flex; justify-content: space-between; align-items: center;",
                         span("Matriz de Correlaciones (Co-ocurrencia / Exclusión)"), 
                         downloadButton("dl_corr", "Descargar PNG", class="btn-sm btn-outline-primary")
                     )),
-                  card_body(
-                    plotlyOutput("corr_plot", height = "750px")
-                  )
+                  card_body(plotlyOutput("corr_plot", height = "750px"))
                 )))),
                 
                 conditionalPanel(condition = "input.viz_mode == 'map'", fluidRow(column(12, card(
@@ -414,9 +415,7 @@ ui <- page_sidebar(
                         span("Distribución Territorial de Medidas (Región Metropolitana)"), 
                         downloadButton("dl_map", "Descargar PNG", class="btn-sm btn-outline-primary")
                     )),
-                  card_body(
-                    leafletOutput("map_plot", height = "650px")
-                  )
+                  card_body(leafletOutput("map_plot", height = "650px"))
                 ))))
               )
     )
@@ -443,6 +442,9 @@ server <- function(input, output, session) {
   consensus_data <- reactiveVal(NULL)
   current_row <- reactiveVal(1)
   
+  info_gral_data <- reactiveVal(data.frame(Plan = character(), stringsAsFactors = FALSE))
+  info_gral_dict <- reactiveVal(data.frame(Columna=character(), Tipo=character(), Opciones=character(), stringsAsFactors=FALSE))
+  
   current_choices <- reactiveVal(data.frame(Choice=character(), Acronimo=character(), stringsAsFactors=FALSE))
   questions_set <- reactiveVal(data.frame(Pregunta=character(), Tipo=character(), Opciones_Acronimos=character(), stringsAsFactors=FALSE))
   choices_list_master <- reactiveVal(list())
@@ -454,6 +456,201 @@ server <- function(input, output, session) {
     if(is.null(active_project())) { HTML("<div class='alert alert-warning'>Ningún proyecto activo</div>") }
     else { HTML(paste0("<div class='alert alert-success'><strong>Proyecto Activo:</strong><br>", active_project(), "</div>")) }
   })
+  
+  # ==========================================================================
+  # LÓGICA DE INFO GENERAL (CAPA 0)
+  # ==========================================================================
+  
+  output$info_gral_table <- renderDT({
+    df <- info_gral_data()
+    req(df)
+    dict <- info_gral_dict()
+    
+    if (nrow(dict) > 0) {
+      for(i in 1:nrow(dict)) {
+        col <- dict$Columna[i]
+        t <- dict$Tipo[i]
+        if (col %in% names(df) && t == "Lista") {
+          niveles_dict <- strsplit(dict$Opciones[i], ";")[[1]] %>% trimws()
+          niveles_dict <- niveles_dict[niveles_dict != ""]
+          
+          valores_actuales <- unique(na.omit(as.character(df[[col]])))
+          valores_actuales <- valores_actuales[trimws(valores_actuales) != ""]
+          
+          niveles_finales <- unique(c(niveles_dict, valores_actuales))
+          df[[col]] <- factor(as.character(df[[col]]), levels = niveles_finales)
+        }
+      }
+    }
+    
+    cols_dinero <- which(names(df) %in% dict$Columna[dict$Tipo == "Dinero"]) - 1
+    cols_numero <- which(names(df) %in% dict$Columna[dict$Tipo == "Número"]) - 1
+    
+    col_defs <- list()
+    
+    if (length(cols_dinero) > 0) {
+      col_defs[[length(col_defs) + 1]] <- list(
+        targets = cols_dinero,
+        render = JS(
+          "function(data, type, row, meta) {",
+          "  if(type === 'display' && data !== null && data !== '') {",
+          "    var str = data.toString().trim();",
+          "    if(/^[0-9.,-]+$/.test(str)) {",
+          "      var num = parseFloat(str.replace(/\\./g, '').replace(',', '.'));",
+          "      if(!isNaN(num)) return '$ ' + num.toLocaleString('es-CL');",
+          "    }",
+          "  }",
+          "  return data;",
+          "}"
+        )
+      )
+    }
+    if (length(cols_numero) > 0) {
+      col_defs[[length(col_defs) + 1]] <- list(
+        targets = cols_numero,
+        render = JS(
+          "function(data, type, row, meta) {",
+          "  if(type === 'display' && data !== null && data !== '') {",
+          "    var str = data.toString().trim();",
+          "    if(/^[0-9.,-]+$/.test(str)) {",
+          "      var num = parseFloat(str.replace(/\\./g, '').replace(',', '.'));",
+          "      if(!isNaN(num)) return num.toLocaleString('es-CL');",
+          "    }",
+          "  }",
+          "  return data;",
+          "}"
+        )
+      )
+    }
+    
+    # 2. CONFIGURACIÓN EXPLÍCITA DE MENÚS DESPLEGABLES (LISTAS) PARA DATATABLES
+    if (nrow(dict) > 0) {
+      list_rows <- which(dict$Tipo == "Lista" & dict$Columna %in% names(df))
+      if (length(list_rows) > 0) {
+        for (r in list_rows) {
+          col_name <- dict$Columna[r]
+          col_idx <- which(names(df) == col_name) - 1
+          opciones_str <- dict$Opciones[r]
+          
+          opts_vec <- strsplit(opciones_str, ";")[[1]] %>% trimws()
+          opts_vec <- opts_vec[opts_vec != ""]
+          opts_js <- paste0('"', opts_vec, '"', collapse = ",")
+          
+          col_defs[[length(col_defs) + 1]] <- list(
+            targets = col_idx,
+            createdCell = JS(paste0(
+              "function (td, cellData, rowData, row, col) {",
+              "  $(td).attr('data-type', 'select');",
+              "  $(td).attr('data-options', '[", opts_js, "]');",
+              "}"
+            ))
+          )
+        }
+      }
+    }
+    
+    datatable(df, editable = list(target = "cell"), rownames = FALSE, 
+              options = list(pageLength = 100, scrollX = TRUE, columnDefs = col_defs))
+  })
+  
+  observeEvent(input$info_gral_table_cell_edit, {
+    info <- input$info_gral_table_cell_edit
+    df <- info_gral_data()
+    dict <- info_gral_dict()
+    
+    if (nrow(dict) > 0) {
+      for(i in 1:nrow(dict)) {
+        col <- dict$Columna[i]
+        if (col %in% names(df) && dict$Tipo[i] == "Lista") {
+          niveles_dict <- strsplit(dict$Opciones[i], ";")[[1]] %>% trimws()
+          niveles_dict <- niveles_dict[niveles_dict != ""]
+          
+          valores_actuales <- unique(na.omit(as.character(df[[col]])))
+          valores_actuales <- valores_actuales[trimws(valores_actuales) != ""]
+          
+          niveles_finales <- unique(c(niveles_dict, valores_actuales))
+          df[[col]] <- factor(as.character(df[[col]]), levels = niveles_finales)
+        }
+      }
+    }
+    
+    df <- DT::editData(df, info, rownames = FALSE)
+    info_gral_data(df)
+  })
+  
+  observeEvent(input$add_info_col_btn, {
+    new_col <- trimws(input$new_info_col)
+    t <- input$new_info_type
+    opt <- if(t == "Lista") input$new_info_options else if(t %in% c("Número", "Dinero")) input$new_info_nulls else ""
+    req(new_col, new_col != "")
+    
+    df <- info_gral_data()
+    dict <- info_gral_dict()
+    
+    if(!new_col %in% names(df)) {
+      if(t == "Fecha") {
+        df[[new_col]] <- as.Date(NA)
+      } else if(t == "Lista") {
+        niveles <- strsplit(opt, ";")[[1]] %>% trimws()
+        df[[new_col]] <- factor(rep(NA_character_, nrow(df)), levels = niveles)
+      } else {
+        df[[new_col]] <- ""
+      }
+      info_gral_data(df)
+      
+      new_dict_row <- data.frame(Columna=new_col, Tipo=t, Opciones=opt, stringsAsFactors=FALSE)
+      dict <- bind_rows(dict, new_dict_row)
+      info_gral_dict(dict)
+      
+      if (!is.null(active_project())) {
+        proj_dir <- file.path(workspace, active_project())
+        write_excel_csv2(dict, file.path(proj_dir, "config", "diccionario_info_general.csv"), na = "")
+        write_excel_csv2(df, file.path(proj_dir, "info_general.csv"), na = "")
+      }
+      
+      updateTextInput(session, "new_info_col", value = "")
+      if(t == "Lista") updateTextInput(session, "new_info_options", value = "")
+      if(t %in% c("Número", "Dinero")) updateTextInput(session, "new_info_nulls", value = "")
+      showNotification(paste("Columna", new_col, "agregada con éxito como", t), type = "message")
+      
+    } else {
+      idx <- which(dict$Columna == new_col)
+      if(length(idx) > 0 && dict$Tipo[idx] == "Lista" && t == "Lista") {
+        opciones_actuales <- strsplit(dict$Opciones[idx], ";")[[1]] %>% trimws()
+        opciones_nuevas <- strsplit(opt, ";")[[1]] %>% trimws()
+        opciones_combinadas <- unique(c(opciones_actuales, opciones_nuevas))
+        opciones_combinadas <- opciones_combinadas[opciones_combinadas != ""]
+        
+        if(length(opciones_combinadas) > length(opciones_actuales)) {
+          dict$Opciones[idx] <- paste(opciones_combinadas, collapse = "; ")
+          info_gral_dict(dict)
+          
+          if (!is.null(active_project())) {
+            proj_dir <- file.path(workspace, active_project())
+            write_excel_csv2(dict, file.path(proj_dir, "config", "diccionario_info_general.csv"), na = "")
+          }
+          showNotification(paste("Nuevas opciones agregadas a la lista:", new_col), type = "message")
+          updateTextInput(session, "new_info_col", value = "")
+          updateTextInput(session, "new_info_options", value = "")
+        } else {
+          showNotification("Esas opciones ya existen en la lista.", type = "warning")
+        }
+      } else {
+        showNotification("La columna ya existe y no es posible modificar su tipo base.", type = "error")
+      }
+    }
+  })
+  
+  observeEvent(input$save_info_btn, {
+    req(active_project(), info_gral_data())
+    file_path <- file.path(workspace, active_project(), "info_general.csv")
+    write_excel_csv2(info_gral_data(), file_path, na = "")
+    showNotification("Información General guardada con éxito en el proyecto.", type = "message")
+  })
+  
+  # ==========================================================================
+  # CREACIÓN Y CARGA DE PROYECTOS
+  # ==========================================================================
   
   observeEvent(input$create_proj_btn, {
     req(input$new_proj_name, input$upload_csv)
@@ -474,6 +671,13 @@ server <- function(input, output, session) {
     initial_q_set <- data.frame(Pregunta = base_cols, Tipo = "Text Field", Opciones_Acronimos = "N/A (Texto Libre)", stringsAsFactors = FALSE)
     write_excel_csv2(initial_q_set, file.path(proj_dir, "config", "diccionario_variables.csv"), na = "")
     
+    planes_unicos <- if("Plan" %in% names(df_new)) unique(na.omit(df_new$Plan)) else character(0)
+    df_info_new <- data.frame(Plan = planes_unicos, stringsAsFactors = FALSE)
+    write_excel_csv2(df_info_new, file.path(proj_dir, "info_general.csv"), na = "")
+    
+    dict_new <- data.frame(Columna="Plan", Tipo="Texto", Opciones="", stringsAsFactors=FALSE)
+    write_excel_csv2(dict_new, file.path(proj_dir, "config", "diccionario_info_general.csv"), na = "")
+    
     actualizar_lista_proyectos()
     updateSelectInput(session, "existing_proj", selected = basename(proj_dir))
     showNotification("Proyecto creado. Sincronizando...", type="message")
@@ -488,6 +692,45 @@ server <- function(input, output, session) {
     
     df_bruta <- leer_csv_robusto(file.path(proj_dir, "datos_brutos.csv"))
     df_bruta <- fill_missing_ids(df_bruta)
+    
+    info_file <- file.path(proj_dir, "info_general.csv")
+    dict_info_file <- file.path(proj_dir, "config", "diccionario_info_general.csv")
+    
+    dict <- data.frame(Columna=character(), Tipo=character(), Opciones=character(), stringsAsFactors=FALSE)
+    if(file.exists(dict_info_file)) { dict <- leer_csv_robusto(dict_info_file) }
+    
+    if (file.exists(info_file)) {
+      df_info <- leer_csv_robusto(info_file)
+      cambios_dict <- FALSE
+      
+      if(nrow(dict) > 0) {
+        for(i in 1:nrow(dict)) {
+          col <- dict$Columna[i]; t <- dict$Tipo[i]; opt <- dict$Opciones[i]
+          
+          if(col %in% names(df_info)) {
+            if(t == "Lista") {
+              niveles_dict <- strsplit(opt, ";")[[1]] %>% trimws()
+              niveles_data <- unique(na.omit(as.character(df_info[[col]])))
+              niveles_data <- niveles_data[trimws(niveles_data) != ""]
+              niveles_combinados <- unique(c(niveles_dict, niveles_data))
+              
+              if(length(niveles_combinados) > length(niveles_dict)) {
+                dict$Opciones[i] <- paste(niveles_combinados, collapse = "; ")
+                cambios_dict <- TRUE
+              }
+            }
+            df_info[[col]] <- as.character(df_info[[col]])
+          }
+        }
+      }
+      info_gral_dict(dict)
+      if(cambios_dict) { write_excel_csv2(dict, dict_info_file, na = "") }
+      info_gral_data(df_info)
+    } else {
+      planes_unicos <- if("Plan" %in% names(df_bruta)) unique(na.omit(df_bruta$Plan)) else character(0)
+      info_gral_data(data.frame(Plan = planes_unicos, stringsAsFactors = FALSE))
+      info_gral_dict(dict)
+    }
     
     rev_name <- gsub(" ", "_", input$reviewer_name)
     file_curado <- file.path(proj_dir, paste0("dataset_curado_", rev_name, ".csv"))
@@ -539,7 +782,6 @@ server <- function(input, output, session) {
     updateSelectInput(session, "freq_col", choices = todas_columnas, selected = if("Eje" %in% todas_columnas) "Eje" else todas_columnas[1])
     updateSelectInput(session, "sankey_source", choices = todas_columnas, selected = if("Eje" %in% todas_columnas) "Eje" else todas_columnas[1])
     updateSelectInput(session, "sankey_target", choices = todas_columnas, selected = if("Área" %in% todas_columnas) "Área" else todas_columnas[2])
-    updateSelectInput(session, "chord_col", choices = todas_columnas, selected = if("Colaboradores externos" %in% todas_columnas) "Colaboradores externos" else todas_columnas[1])
     
     cols_clasificadoras <- intersect(c("Eje", "Área", "Tipo de medida", "Colaboradores externos"), todas_columnas)
     if(length(cols_clasificadoras) == 0) cols_clasificadoras <- setdiff(todas_columnas, c("ID", "status"))[1:min(3, length(todas_columnas))]
@@ -795,18 +1037,45 @@ server <- function(input, output, session) {
     return(df)
   })
   
+  # === ACTUALIZAR OPCIONES MAPA SEGUN CAPA 0 ===
+  observe({
+    req(info_gral_data())
+    df_info <- info_gral_data()
+    cols <- setdiff(names(df_info), "Plan")
+    opciones <- c("Cantidad de Medidas" = "medidas")
+    if (length(cols) > 0) { opciones <- c(opciones, cols) }
+    
+    sel <- input$map_var
+    if (is.null(sel) || !(sel %in% opciones)) sel <- "medidas"
+    updateSelectInput(session, "map_var", choices = opciones, selected = sel)
+  })
+  
+  observeEvent(input$map_var, {
+    if(!is.null(input$map_var) && input$map_var != "medidas" && input$map_grouping == "zona") {
+      updateRadioButtons(session, "map_grouping", selected = "comuna")
+      showNotification("Vista cambiada a Comuna para visualizar el detalle del Plan.", type = "message")
+    }
+  })
+  
   observeEvent(viz_data(), {
     df <- viz_data()
     actor_col <- "Colaboradores externos"
     if("Plan" %in% names(df) && actor_col %in% names(df)) {
-      total_actores <- df %>% select(all_of(actor_col)) %>% tidyr::drop_na() %>% tidyr::separate_rows(!!sym(actor_col), sep = ";\\s*") %>% mutate(!!sym(actor_col) := str_to_title(trimws(!!sym(actor_col)))) %>% filter(!!sym(actor_col) != "") %>% pull(!!sym(actor_col)) %>% n_distinct()
-      updateNumericInput(session, "top_actors_n", value = total_actores, max = total_actores)
+      actores <- df %>% select(all_of(actor_col)) %>% tidyr::drop_na() %>% 
+        tidyr::separate_rows(!!sym(actor_col), sep = ";\\s*") %>% 
+        mutate(!!sym(actor_col) := str_to_title(trimws(!!sym(actor_col)))) %>% 
+        filter(!!sym(actor_col) != "") %>% pull(!!sym(actor_col)) %>% unique() %>% sort()
+      
+      updateSelectizeInput(session, "network_search_actor", choices = c("--- Mostrar Todos ---" = "", actores), server = TRUE)
+      
+      if (is.null(input$network_search_actor) || input$network_search_actor == "") {
+        updateNumericInput(session, "top_actors_n", value = min(15, length(actores)), max = length(actores))
+      }
     }
   })
   
   filtrar_verbos <- function(tokens, mode) {
     if(is.null(mode) || mode == "all") return(tokens)
-    
     if (mode == "only_verbs") {
       tokens <- tokens %>% filter(str_detect(word, "[aei]r$") & !word %in% falsos_verbos)
     } else if (mode == "no_verbs") {
@@ -857,27 +1126,16 @@ server <- function(input, output, session) {
     return(res)
   }
   
-  # =========================================================================
-  # REACTIVAS SEPARADAS (DATA vs PLOT) PARA PERMITIR EXPORTACIÓN A EXCEL
-  # =========================================================================
-  
-  # -- Wordcloud Global --
   wc_global_data_reac <- reactive({
-    df <- viz_data()
-    idx_desc <- grep("descripci", tolower(names(df)))
+    df <- viz_data(); idx_desc <- grep("descripci", tolower(names(df)))
     if(length(idx_desc) == 0) return(NULL)
-    
-    nombre_col_real <- names(df)[idx_desc[1]] 
-    group_col <- if("Plan" %in% names(df)) "Plan" else "ID" 
+    nombre_col_real <- names(df)[idx_desc[1]]; group_col <- if("Plan" %in% names(df)) "Plan" else "ID" 
     
     tokens <- generar_tokens(df, nombre_col_real, group_col, input$custom_stopwords, input$verb_filter, input$ngram_mode)
     if(nrow(tokens) == 0) return(NULL)
     
     total_grupos <- n_distinct(tokens$Grupo)
-    
-    word_metrics <- tokens %>% 
-      group_by(word) %>% 
-      summarise(frecuencia_absoluta = n(), grupos_distintos = n_distinct(Grupo)) 
+    word_metrics <- tokens %>% group_by(word) %>% summarise(frecuencia_absoluta = n(), grupos_distintos = n_distinct(Grupo)) 
     
     if (!is.null(input$wc_count_mode) && input$wc_count_mode == "pond") {
       word_metrics <- word_metrics %>% mutate(peso_dispersion = grupos_distintos / total_grupos, freq_final = frecuencia_absoluta * peso_dispersion) %>% filter(grupos_distintos > 1 | total_grupos == 1)
@@ -886,48 +1144,11 @@ server <- function(input, output, session) {
     }
     
     freqs <- word_metrics %>% arrange(desc(freq_final)) %>% select(word, freq = freq_final, frecuencia_absoluta, grupos_distintos)
-    freqs$freq <- round(freqs$freq, 1)
-    as.data.frame(freqs)
+    freqs$freq <- round(freqs$freq, 1); as.data.frame(freqs)
   })
   
-  output$nlp_wordcloud <- renderWordcloud2({
-    freqs <- wc_global_data_reac()
-    req(freqs)
-    wordcloud2(head(freqs[, c("word", "freq")], 100), size = 0.6)
-  })
-  
-  # -- Heatmap Global --
-  hm_global_data_reac <- reactive({
-    df <- viz_data()
-    idx_desc <- grep("descripci", tolower(names(df)))
-    if(length(idx_desc) == 0) return(NULL)
-    
-    nombre_col_real <- names(df)[idx_desc[1]]
-    group_col <- if("Plan" %in% names(df)) "Plan" else "ID"
-    
-    tokens <- generar_tokens(df, nombre_col_real, group_col, input$custom_stopwords, input$verb_filter, input$ngram_mode)
-    if(nrow(tokens) == 0) return(NULL)
-    
-    top_words <- tokens %>% count(word, sort = TRUE) %>% head(20) %>% pull(word)
-    if(length(top_words) == 0) return(NULL)
-    
-    tokens %>% filter(word %in% top_words) %>% count(Grupo, word) %>% tidyr::complete(Grupo, word, fill = list(n = 0))
-  })
-  
-  output$nlp_heatmap <- renderPlotly({
-    heat_df <- hm_global_data_reac()
-    req(heat_df)
-    group_col <- if("Plan" %in% names(viz_data())) "Plan" else "ID"
-    plot_ly(heat_df, x = ~Grupo, y = ~word, z = ~n, type = "heatmap", colors = colorRamp(c("#f7fbff", "#08306b"))) %>%
-      layout(title = "Frecuencia de Top Términos", xaxis = list(title = group_col), yaxis = list(title = "Término")) %>%
-      config(displayModeBar = FALSE)
-  })
-  
-  # -- Wordcloud Unique --
   wc_unique_data_reac <- reactive({
-    df_global <- curated_data() 
-    req(input$unique_group_col, input$unique_group_val)
-    
+    df_global <- curated_data(); req(input$unique_group_col, input$unique_group_val)
     idx_desc <- grep("descripci", tolower(names(df_global)))
     if(length(idx_desc) == 0 || !input$unique_group_col %in% names(df_global)) return(NULL)
     
@@ -946,46 +1167,21 @@ server <- function(input, output, session) {
     as.data.frame(freqs)
   })
   
-  output$nlp_wordcloud_unique <- renderWordcloud2({
-    freqs <- wc_unique_data_reac()
-    req(freqs)
-    wordcloud2(head(freqs[, c("word", "freq")], 80), size = 0.6, color = "random-light", backgroundColor = "#2c3e50")
+  output$nlp_title_ui <- renderText({
+    if(is.null(input$nlp_type) || input$nlp_type == "global") { "Nube de Palabras: Frecuencia Global" }
+    else { paste("Nube de Palabras (Keyness Chi-Cuadrado):", input$unique_group_val) }
   })
   
-  # -- Heatmap Unique --
-  hm_unique_data_reac <- reactive({
-    df_global <- curated_data()
-    req(input$unique_group_col, input$unique_group_val)
-    
-    idx_desc <- grep("descripci", tolower(names(df_global)))
-    if(length(idx_desc) == 0 || !input$unique_group_col %in% names(df_global)) return(NULL)
-    
-    nombre_col_real <- names(df_global)[idx_desc[1]]
-    tokens_grouped <- generar_tokens(df_global, nombre_col_real, input$unique_group_col, input$custom_stopwords, input$verb_filter, input$ngram_mode)
-    if(nrow(tokens_grouped) == 0) return(NULL)
-    
-    word_counts <- tokens_grouped %>% count(Grupo, word)
-    if(nrow(word_counts) == 0) return(NULL)
-    
-    mi_dfm <- word_counts %>% cast_dfm(document = Grupo, term = word, value = n)
-    stat_keyness <- tryCatch({ textstat_keyness(mi_dfm, target = as.character(input$unique_group_val)) }, error = function(e) { return(NULL) })
-    if(is.null(stat_keyness) || nrow(stat_keyness) == 0) return(NULL)
-    
-    top_words <- stat_keyness %>% filter(chi2 > 0 & p < 0.05) %>% arrange(desc(chi2)) %>% head(20) %>% pull(feature)
-    if(length(top_words) == 0) return(NULL)
-    
-    tokens_grouped %>% filter(word %in% top_words) %>% count(Grupo, word) %>% tidyr::complete(Grupo, word, fill = list(n = 0))
+  output$nlp_wordcloud_ui <- renderWordcloud2({
+    if(!is.null(input$nlp_type) && input$nlp_type == "unique") {
+      freqs <- wc_unique_data_reac(); req(freqs)
+      wordcloud2(head(freqs[, c("word", "freq")], 80), size = 0.6, color = "random-light", backgroundColor = "#2c3e50")
+    } else {
+      freqs <- wc_global_data_reac(); req(freqs)
+      wordcloud2(head(freqs[, c("word", "freq")], 100), size = 0.6)
+    }
   })
   
-  output$nlp_heatmap_unique <- renderPlotly({
-    heat_df <- hm_unique_data_reac()
-    req(heat_df)
-    plot_ly(heat_df, x = ~Grupo, y = ~word, z = ~n, type = "heatmap", colors = colorRamp(c("#fdfbfb", "#e74c3c"))) %>%
-      layout(title = paste("Keyness (Distribución real):", input$unique_group_val), xaxis = list(title = input$unique_group_col), yaxis = list(title = "Término Clave")) %>%
-      config(displayModeBar = FALSE)
-  })
-  
-  # -- Sankey --
   sankey_data_reac <- reactive({
     df <- viz_data()
     v_orig <- input$sankey_source
@@ -1054,7 +1250,6 @@ server <- function(input, output, session) {
       config(displayModeBar = FALSE)
   })
   
-  # -- Frecuencias --
   freq_data_reac <- reactive({
     df <- viz_data()
     req(input$freq_col %in% names(df))
@@ -1081,7 +1276,7 @@ server <- function(input, output, session) {
   output$freq_plot <- renderPlotly({
     freq_df <- freq_data_reac()
     req(freq_df)
-    freq_df <- head(freq_df, 20) # Para visualización, top 20
+    freq_df <- head(freq_df, 20)
     if(nrow(freq_df) == 0) return(NULL)
     
     freq_df$Categoria_Corta <- str_trunc(freq_df$Categoria, 20, "right")
@@ -1094,7 +1289,6 @@ server <- function(input, output, session) {
       config(displayModeBar = FALSE)
   })
   
-  # -- Network & Simbiosis KPI --
   network_kpi_data <- reactive({
     df <- viz_data()
     actor_col <- "Colaboradores externos"
@@ -1106,19 +1300,15 @@ server <- function(input, output, session) {
     net_df <- df %>% 
       select(Plan, all_of(actor_col)) %>% 
       mutate(Actor = as.character(!!sym(actor_col))) %>%
-      mutate(Actor = ifelse(is.na(Actor) | trimws(Actor) == "" | tolower(trimws(Actor)) %in% c("na", "nc", "n/a", "sin informacion"), NA, trimws(Actor)))
+      mutate(Actor = ifelse(is.na(Actor) | trimws(Actor) == "" | tolower(trimws(Actor)) %in% c("na", "nc", "n/a", "sin informacion"), NA_character_, trimws(Actor)))
     
     planes_con_actores <- net_df %>% filter(!is.na(Actor)) %>% pull(Plan) %>% unique()
     p_aislados <- p_totales - length(planes_con_actores)
     
-    edges_df <- net_df %>% 
-      filter(!is.na(Actor)) %>% 
-      tidyr::separate_rows(Actor, sep = ";\\s*") %>% 
-      mutate(Actor = str_to_title(trimws(Actor))) %>% 
-      filter(Actor != "")
+    edges_df <- net_df %>% filter(!is.na(Actor)) %>% 
+      tidyr::separate_rows(Actor, sep = ";\\s*") %>% mutate(Actor = str_to_title(trimws(Actor))) %>% filter(Actor != "")
     
     e_totales <- nrow(edges_df)
-    
     actores_counts <- edges_df %>% group_by(Actor) %>% summarise(n_planes = n_distinct(Plan))
     actores_compartidos <- actores_counts %>% filter(n_planes > 1) %>% pull(Actor)
     e_compartidos <- edges_df %>% filter(Actor %in% actores_compartidos) %>% nrow()
@@ -1127,54 +1317,31 @@ server <- function(input, output, session) {
       peso_red <- e_compartidos / e_totales
       penalizacion <- 1 - (p_aislados / p_totales)
       tasa <- peso_red * penalizacion
-    } else {
-      tasa <- 0
-    }
+    } else { tasa <- 0 }
     
-    list(
-      tasa = tasa,
-      e_totales = e_totales,
-      e_compartidos = e_compartidos,
-      p_totales = p_totales,
-      p_aislados = p_aislados
-    )
+    list(tasa = tasa, e_totales = e_totales, e_compartidos = e_compartidos, p_totales = p_totales, p_aislados = p_aislados)
   })
   
-  # ENVOLVEMOS EL RESULTADO DINÁMICO CON withMathJax()
   output$network_kpi_ui <- renderUI({
-    res <- network_kpi_data()
-    req(res)
-    
+    res <- network_kpi_data(); req(res)
     withMathJax(
-      card(
-        class = "bg-light mb-3",
-        card_header(
-          class = "bg-dark text-white", 
-          icon("project-diagram"), 
-          " Índice de Integración Bipartita (Tasa de Simbiosis)"
-        ),
-        card_body(
-          fluidRow(
-            column(4, 
-                   div(style = "display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%;",
-                       h2(paste0(round(res$tasa * 100, 1), "%"), class = "text-primary", style="font-size: 3.5rem; font-weight: bold; margin-bottom: 0;"),
-                       p(class="text-muted mt-2", style="font-size: 1.1rem;", "Nivel de interdependencia global")
-                   )
-            ),
-            column(8,
-                   p("Esta métrica evalúa la cohesión del ecosistema midiendo la estructura de núcleo compartido vs. periferia aislada, aplicando una penalización por fragmentación matemática (Wasserman & Faust, 1994; Latapy et al., 2008)."),
-                   div(style = "background: #fff; padding: 10px; border-radius: 5px; border: 1px solid #ddd; text-align: center; margin-bottom: 15px;",
-                       "$$Tasa = \\left( \\frac{\\sum E_{comp}}{\\sum E_{tot}} \\right) \\times \\left( 1 - \\frac{P_{aislados}}{P_{tot}} \\right)$$"
-                   ),
-                   tags$ul(style="font-size: 0.9em; color: #444;",
-                           tags$li(strong(paste0("E_comp (", res$e_compartidos, "):")), " Número de colaboraciones sostenidas por agentes que conectan múltiples planes (>1 plan)."),
-                           tags$li(strong(paste0("E_tot (", res$e_totales, "):")), " Número total de relaciones de colaboración declaradas en la red."),
-                           tags$li(strong(paste0("P_aislados (", res$p_aislados, "):")), " Cantidad de planes PACCC que no reportan ningún colaborador externo (Silos o Vacíos)."),
-                           tags$li(strong(paste0("P_tot (", res$p_totales, "):")), " Total de planes PACCC actualmente bajo evaluación.")
-                   )
-            )
-          )
-        )
+      card(class = "bg-light mb-3",
+           card_header(class = "bg-dark text-white", icon("project-diagram"), " Índice de Integración Bipartita (Tasa de Simbiosis)"),
+           card_body(
+             fluidRow(
+               column(4, div(style = "display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%;",
+                             h2(paste0(round(res$tasa * 100, 1), "%"), class = "text-primary", style="font-size: 3.5rem; font-weight: bold; margin-bottom: 0;"),
+                             p(class="text-muted mt-2", style="font-size: 1.1rem;", "Nivel de interdependencia global"))),
+               column(8, p("Métrica de cohesión del ecosistema (núcleo compartido vs periferia)."),
+                      div(style = "background: #fff; padding: 10px; border-radius: 5px; border: 1px solid #ddd; text-align: center; margin-bottom: 15px;",
+                          "$$Tasa = \\left( \\frac{\\sum E_{comp}}{\\sum E_{tot}} \\right) \\times \\left( 1 - \\frac{P_{aislados}}{P_{tot}} \\right)$$"),
+                      tags$ul(style="font-size: 0.9em; color: #444;",
+                              tags$li(strong(paste0("E_comp (", res$e_compartidos, "):")), " Colaboraciones de agentes que conectan >1 plan."),
+                              tags$li(strong(paste0("E_tot (", res$e_totales, "):")), " Total de colaboraciones de la red."),
+                              tags$li(strong(paste0("P_aislados (", res$p_aislados, "):")), " Planes sin colaboradores externos."),
+                              tags$li(strong(paste0("P_tot (", res$p_totales, "):")), " Total de planes en el universo visualizado.")))
+             )
+           )
       )
     )
   })
@@ -1188,6 +1355,12 @@ server <- function(input, output, session) {
       tidyr::separate_rows(!!sym(actor_col), sep = ";\\s*") %>% 
       mutate(!!sym(actor_col) := str_to_title(trimws(!!sym(actor_col)))) %>% filter(!!sym(actor_col) != "") 
     
+    search_actor <- input$network_search_actor
+    if(!is.null(search_actor) && search_actor != "") {
+      planes_vinculados <- net_df %>% filter(!!sym(actor_col) == search_actor) %>% pull(Plan) %>% unique()
+      net_df <- net_df %>% filter(Plan %in% planes_vinculados)
+    }
+    
     if(!is.null(input$shared_actors_only) && input$shared_actors_only) {
       actores_compartidos <- net_df %>% group_by(!!sym(actor_col)) %>% summarise(n_planes = n_distinct(Plan)) %>% filter(n_planes > 1) %>% pull(!!sym(actor_col))
       net_df <- net_df %>% filter(!!sym(actor_col) %in% actores_compartidos)
@@ -1199,7 +1372,12 @@ server <- function(input, output, session) {
     actor_freq <- net_df %>% count(!!sym(actor_col), wt = peso, sort = TRUE)
     limite <- input$top_actors_n
     if(is.null(limite) || is.na(limite)) limite <- nrow(actor_freq)
+    
     top_actors <- head(actor_freq[[actor_col]], limite)
+    
+    if(!is.null(search_actor) && search_actor != "") {
+      top_actors <- unique(c(top_actors, search_actor))
+    }
     
     net_df %>% filter(!!sym(actor_col) %in% top_actors)
   })
@@ -1209,99 +1387,46 @@ server <- function(input, output, session) {
     req(net_df)
     actor_col <- "Colaboradores externos"
     
+    search_actor <- input$network_search_actor
+    if (is.null(search_actor)) {
+      search_actor <- ""
+    }
+    
     actores_frecuencias <- net_df %>% group_by(!!sym(actor_col)) %>% summarise(n_planes = n_distinct(Plan))
     actores_comunes <- actores_frecuencias %>% filter(n_planes > 1) %>% pull(!!sym(actor_col))
     
     planes_nodos <- data.frame(id = unique(net_df$Plan), label = unique(net_df$Plan), group = "Plan", font.size = 20, stringsAsFactors = FALSE)
     actores_ids <- unique(net_df[[actor_col]])
+    
     actores_nodos <- data.frame(id = actores_ids, label = actores_ids, stringsAsFactors = FALSE) %>% 
-      mutate(group = ifelse(id %in% actores_comunes, "Actor_Comun", "Actor"), font.size = 14)
+      mutate(
+        es_buscado = (search_actor != "" & id == search_actor),
+        group = case_when(
+          es_buscado ~ "Actor_Buscado",
+          id %in% actores_comunes ~ "Actor_Comun",
+          TRUE ~ "Actor"
+        ),
+        font.size = ifelse(es_buscado, 28, 14)
+      ) %>%
+      select(-es_buscado)
     
     nodes <- bind_rows(planes_nodos, actores_nodos)
     
-    if(!is.null(input$net_dir) && input$net_dir == "RL") { 
-      edges <- data.frame(from = net_df[[actor_col]], to = net_df$Plan, value = net_df$peso, stringsAsFactors = FALSE)
-    } else { 
-      edges <- data.frame(from = net_df$Plan, to = net_df[[actor_col]], value = net_df$peso, stringsAsFactors = FALSE) 
-    }
+    edges <- data.frame(from = net_df$Plan, to = net_df[[actor_col]], value = net_df$peso, stringsAsFactors = FALSE) 
     
     g <- visNetwork(nodes, edges, width = "100%") %>% 
       visGroups(groupname = "Plan", shape = "square", color = "#e74c3c") %>% 
       visGroups(groupname = "Actor", shape = "dot", color = "#2ecc71") %>% 
       visGroups(groupname = "Actor_Comun", shape = "dot", color = "#3498db") %>% 
+      visGroups(groupname = "Actor_Buscado", shape = "star", color = "#f1c40f") %>% 
       visEdges(color = list(color = "#BDC3C7", opacity = 0.5), smooth = list(enabled = TRUE, type = "continuous")) %>% 
-      visOptions(highlightNearest = list(enabled = TRUE, degree = 1, hover = TRUE), nodesIdSelection = TRUE)
-    
-    if(is.null(input$net_dir) || input$net_dir == "force") { 
-      g <- g %>% visPhysics(solver = "forceAtlas2Based", forceAtlas2Based = list(gravitationalConstant = -80, centralGravity = 0.01, springLength = 150), stabilization = list(enabled = TRUE, iterations = 300))
-    } else { 
-      g <- g %>% visHierarchicalLayout(direction = input$net_dir, levelSeparation = 300) 
-    }
+      visOptions(highlightNearest = list(enabled = TRUE, degree = 1, hover = TRUE)) %>% 
+      visPhysics(solver = "forceAtlas2Based", 
+                 forceAtlas2Based = list(gravitationalConstant = -80, centralGravity = 0.01, springLength = 150), 
+                 stabilization = list(enabled = TRUE, iterations = 300))
     g
   })
   
-  # -- Diagrama de Cuerdas (Chorddiag) --
-  chord_data_reac <- reactive({
-    df <- viz_data()
-    req(input$chord_col %in% names(df))
-    
-    df_pairs <- df %>% 
-      select(ColumnaObjetivo = all_of(input$chord_col)) %>% 
-      mutate(row_id = row_number()) %>% 
-      mutate(ColumnaObjetivo = as.character(ColumnaObjetivo))
-    
-    df_pairs <- df_pairs %>% 
-      mutate(ColumnaObjetivo = ifelse(is.na(ColumnaObjetivo) | trimws(ColumnaObjetivo) == "" | 
-                                        tolower(trimws(ColumnaObjetivo)) %in% c("na", "nc", "n/a"), 
-                                      "NA/NC", trimws(ColumnaObjetivo)))
-    
-    if (is.null(input$chord_show_na) || !input$chord_show_na) {
-      df_pairs <- df_pairs %>% filter(ColumnaObjetivo != "NA/NC")
-    }
-    
-    df_pairs <- df_pairs %>% 
-      tidyr::separate_rows(ColumnaObjetivo, sep = ";\\s*") %>% 
-      mutate(ColumnaObjetivo = trimws(ColumnaObjetivo)) %>% 
-      filter(ColumnaObjetivo != "")
-    
-    df_pairs <- df_pairs %>% 
-      group_by(row_id) %>% 
-      filter(n() > 1) %>% 
-      ungroup()
-    
-    if(nrow(df_pairs) == 0) return(NULL)
-    
-    co_oc <- df_pairs %>% 
-      inner_join(df_pairs, by = "row_id", relationship = "many-to-many") %>% 
-      filter(ColumnaObjetivo.x < ColumnaObjetivo.y) %>% 
-      count(origen = ColumnaObjetivo.x, destino = ColumnaObjetivo.y, name = "value") %>% 
-      arrange(desc(value))
-    
-    if(nrow(co_oc) == 0) return(NULL)
-    return(co_oc)
-  })
-  
-  chord_matrix_reac <- reactive({
-    co_oc <- chord_data_reac()
-    req(!is.null(co_oc) && nrow(co_oc) > 0)
-    
-    nodos <- unique(c(co_oc$origen, co_oc$destino))
-    mat <- matrix(0, nrow = length(nodos), ncol = length(nodos), dimnames = list(nodos, nodos))
-    
-    for(i in 1:nrow(co_oc)) {
-      mat[co_oc$origen[i], co_oc$destino[i]] <- co_oc$value[i]
-      mat[co_oc$destino[i], co_oc$origen[i]] <- co_oc$value[i]
-    }
-    return(mat)
-  })
-  
-  output$chord_plot <- renderChorddiag({
-    mat <- chord_matrix_reac()
-    req(mat)
-    chorddiag(mat, type = "directional", showTicks = FALSE, groupnamePadding = 15, groupnameFontsize = 13, margin = 120)
-  })
-  
-  # -- CORRELOGRAMA INTERACTIVO (MATRIZ DE CORRELACIONES) --
   corr_data_reac <- reactive({
     df <- viz_data()
     req(input$corr_cols, length(input$corr_cols) >= 1)
@@ -1379,137 +1504,296 @@ server <- function(input, output, session) {
       config(displayModeBar = FALSE)
   })
   
-  # -- MAPA TERRITORIAL (Agrupado por Zonas y Provincias) --
+  # ====================================================================
+  # MAPA TERRITORIAL AVANZADO (CON INTEGRACIÓN CAPA 0)
+  # ====================================================================
   map_data_reac <- reactive({
     df <- viz_data()
     req("Plan" %in% names(df))
     
-    # Función para estandarizar textos y evitar NAs en el cruce de datos del usuario
-    normalizar <- function(x) {
-      tolower(chartr("áéíóúüñÁÉÍÓÚÜÑ", "aeiouunAEIOUUN", trimws(x)))
-    }
+    df_info <- info_gral_data()
+    dict_info <- info_gral_dict()
+    var_selected <- input$map_var
+    if(is.null(var_selected)) var_selected <- "medidas"
     
-    # 1. Conteo de medidas por comuna presentes en el dataset del usuario
-    df_counts <- df %>% 
-      count(Plan, name = "cantidad_medidas") %>%
-      mutate(Plan_norm = normalizar(Plan))
+    normalizar <- function(x) { tolower(chartr("áéíóúüñÁÉÍÓÚÜÑ", "aeiouunAEIOUUN", trimws(x))) }
     
-    # 2. Cruce con las 52 comunas de la RM, calcular comunas que reportan y el promedio sobre ellas
-    zonas_calc <- zonas_rm %>%
+    df_counts <- df %>% count(Plan, name = "cantidad_medidas") %>% mutate(Plan_norm = normalizar(Plan))
+    df_info_norm <- df_info %>% mutate(Plan_norm = normalizar(Plan))
+    
+    base_calc <- zonas_rm %>%
       mutate(nombre_norm = normalizar(nombre_comuna)) %>%
       left_join(df_counts, by = c("nombre_norm" = "Plan_norm")) %>%
-      mutate(cantidad_medidas = ifelse(is.na(cantidad_medidas), 0, as.numeric(cantidad_medidas))) %>%
-      group_by(zona) %>%
-      summarise(
-        total_comunas = n(),
-        comunas_reportan = sum(cantidad_medidas > 0, na.rm = TRUE),
-        total_medidas = sum(cantidad_medidas, na.rm = TRUE),
-        promedio_medidas = ifelse(comunas_reportan > 0, total_medidas / comunas_reportan, 0),
-        .groups = "drop"
-      )
+      left_join(df_info_norm, by = c("nombre_norm" = "Plan_norm")) %>%
+      mutate(cantidad_medidas = ifelse(is.na(cantidad_medidas), 0, as.numeric(cantidad_medidas)))
     
-    return(zonas_calc)
+    if (var_selected == "medidas") {
+      if (is.null(input$map_grouping) || input$map_grouping == "zona") {
+        zonas_calc <- base_calc %>%
+          group_by(zona) %>%
+          summarise(
+            total_comunas = n(),
+            comunas_reportan = sum(cantidad_medidas > 0, na.rm = TRUE),
+            total_medidas = sum(cantidad_medidas, na.rm = TRUE),
+            valor_mapa = ifelse(comunas_reportan > 0, total_medidas / comunas_reportan, 0),
+            .groups = "drop"
+          )
+        return(list(tipo = "zona", data = zonas_calc))
+      } else {
+        comunas_calc <- base_calc %>%
+          mutate(valor_mapa = cantidad_medidas) %>%
+          select(codigo_comuna, nombre_comuna, valor_mapa)
+        return(list(tipo = "comuna", data = comunas_calc))
+      }
+    } else {
+      t <- dict_info$Tipo[dict_info$Columna == var_selected]
+      t <- if(length(t) > 0) t[1] else "Texto"
+      
+      base_df <- base_calc %>%
+        select(codigo_comuna, nombre_comuna, zona, cantidad_medidas, val_raw = !!sym(var_selected)) %>%
+        mutate(val_raw = as.character(val_raw))
+      
+      if(t %in% c("Número", "Dinero")) {
+        base_df <- base_df %>%
+          mutate(
+            val_limpio = trimws(val_raw),
+            val_str_calc = gsub("[\\$\\s]", "", val_limpio),
+            val_str_calc = gsub("\\.", "", val_str_calc),
+            val_str_calc = gsub(",", ".", val_str_calc),
+            val_num_estricto = suppressWarnings(as.numeric(val_str_calc)),
+            
+            is_text = is.na(val_num_estricto) & !is.na(val_limpio) & val_limpio != "",
+            val_cat = ifelse(is_text & !tolower(val_limpio) %in% c("na", "n/a", "nc"), val_limpio, NA_character_),
+            val_num = ifelse(is_text, NA_real_, val_num_estricto)
+          )
+      } else if (t == "Lista") {
+        base_df <- base_df %>% mutate(
+          val_limpio = trimws(val_raw),
+          val_num = ifelse(is.na(val_limpio) | val_limpio == "" | tolower(val_limpio) %in% c("na", "n/a", "s/i", "n/d"), 
+                           NA_real_, 
+                           stringr::str_count(val_limpio, ";") + 1),
+          val_cat = NA_character_
+        )
+      } else {
+        base_df <- base_df %>% mutate(
+          val_cat = case_when(
+            is.na(val_raw) | trimws(val_raw) == "" | tolower(trimws(val_raw)) %in% c("na", "n/a", "s/i", "n/d") ~ "NA (Sin Info)",
+            tolower(trimws(val_raw)) %in% c("no", "falso", "false", "0") ~ "Falso",
+            TRUE ~ "Verdadero"
+          ),
+          val_num = NA_real_
+        )
+      }
+      
+      if (input$map_grouping == "zona") {
+        base_df <- base_df %>% group_by(zona) %>%
+          summarise(
+            cantidad_medidas = sum(cantidad_medidas, na.rm=TRUE),
+            val_num = if(all(is.na(val_num))) NA_real_ else sum(val_num, na.rm=TRUE),
+            val_cat = if(all(is.na(val_cat))) NA_character_ else paste(unique(na.omit(val_cat)), collapse=" + "),
+            .groups = "drop"
+          ) %>%
+          mutate(codigo_comuna = zona, nombre_comuna = paste("Zona", zona)) 
+      }
+      
+      return(list(tipo = if(input$map_grouping == "zona") "zona_capa0" else "comuna_capa0", data = base_df, var_type = t, var_name = var_selected))
+    }
   })
   
   output$map_plot <- renderLeaflet({
-    datos_zona <- map_data_reac()
-    req(datos_zona)
+    map_res <- map_data_reac()
+    req(map_res)
+    datos_mapa <- map_res$data
     
-    # 1. Obtener geometrías de las comunas RM y cruzar con diccionario de zonas mediante CODIGO_COMUNA
-    # Esto garantiza el cruce espacial sin depender de nombres y evita el bloque NA
-    mapa_rm <- mapa_comunas %>%
-      filter(codigo_region == "13") %>%
-      left_join(zonas_rm, by = "codigo_comuna") %>%
-      st_as_sf() %>%
-      st_transform(crs = 4326) %>%
-      filter(!is.na(zona)) # Salvaguarda contra geometrías huérfanas
+    mapa_rm <- mapa_comunas %>% filter(codigo_region == "13") %>%
+      left_join(zonas_rm, by = "codigo_comuna") %>% st_as_sf() %>%
+      st_transform(crs = 4326) %>% filter(!is.na(zona)) 
     
-    # 2. Disolver fronteras internas: Agrupar por zona y unir polígonos
-    mapa_zonas <- mapa_rm %>%
-      group_by(zona) %>%
-      summarise(geometry = st_union(geometry), .groups = "drop")
-    
-    # 3. Unir los cálculos numéricos al mapa disuelto y generar la etiqueta
-    mapa_zonas_datos <- mapa_zonas %>%
-      left_join(datos_zona, by = "zona") %>%
-      mutate(
-        etiqueta = paste0(
-          "<div style='font-size: 14px;'>",
-          "<b>Zona/Provincia: ", zona, "</b><br><hr style='margin: 4px 0;'>",
-          "Comunas: ", comunas_reportan, "<br>",
-          "Medidas: ", round(promedio_medidas, 2), "<br>",
-          "Total de Comunas: ", total_comunas,
-          "</div>"
-        )
-      )
-    
-    # 4. Crear paleta basada en el PROMEDIO
-    paleta <- colorNumeric(palette = "Greens", domain = mapa_zonas_datos$promedio_medidas, na.color = "#e8e8e8")
-    valores_leyenda <- na.omit(mapa_zonas_datos$promedio_medidas)
-    
-    # Evaluar si el usuario activó "Etiquetas siempre visibles"
     etiquetas_visibles <- if (!is.null(input$map_always_labels) && input$map_always_labels) TRUE else FALSE
     
-    # 5. Renderizar Leaflet interactivo
-    leaflet(mapa_zonas_datos) %>%
-      addPolygons(
-        fillColor = ~paleta(promedio_medidas), 
-        weight = 1.5, color = "#444444", fillOpacity = 0.85,
-        highlightOptions = highlightOptions(weight = 3, color = "#000000", bringToFront = TRUE),
-        label = ~lapply(etiqueta, HTML), 
-        labelOptions = labelOptions(
-          noHide = etiquetas_visibles,
-          style = list("font-weight" = "normal", padding = "8px", "box-shadow" = "3px 3px rgba(0,0,0,0.25)"), 
-          textsize = "13px", 
-          direction = "auto"
+    trans_val <- function(x) {
+      if(is.null(input$map_scale) || input$map_scale == "lin") return(x)
+      sign_x <- sign(x)
+      log10(abs(x) + 1) * sign_x
+    }
+    inverse_trans <- function(x) {
+      if(is.null(input$map_scale) || input$map_scale == "lin") return(x)
+      sign_x <- sign(x)
+      (10^abs(x) - 1) * sign_x
+    }
+    
+    formato_leyenda_limpio <- function(type, cuts) {
+      vals <- inverse_trans(cuts)
+      format(vals, big.mark = ".", decimal.mark = ",", scientific = FALSE, trim = TRUE, drop0trailing = TRUE)
+    }
+    
+    if (map_res$tipo %in% c("zona", "comuna")) {
+      if (map_res$tipo == "zona") {
+        mapa_zonas <- mapa_rm %>% group_by(zona) %>% summarise(geometry = st_union(geometry), .groups = "drop")
+        mapa_zonas_datos <- mapa_zonas %>% left_join(datos_mapa, by = "zona") %>%
+          mutate(
+            opacidad = ifelse(is.na(valor_mapa) | valor_mapa == 0, 0.15, 0.85),
+            etiqueta = paste0("<div style='font-size: 14px;'><b>Zona: ", zona, "</b><br><hr style='margin: 4px 0;'>",
+                              "Comunas Activadas: ", comunas_reportan, "<br>Promedio de Medidas: ", round(valor_mapa, 2), "<br>",
+                              "Total Comunas en Zona: ", total_comunas, "</div>")
+          )
+        leyenda_titulo <- "Promedio de<br>Medidas"
+      } else {
+        mapa_zonas_datos <- mapa_rm %>% select(codigo_comuna, geometry) %>% left_join(datos_mapa, by = "codigo_comuna") %>%
+          mutate(
+            opacidad = ifelse(is.na(valor_mapa) | valor_mapa == 0, 0.15, 0.85),
+            etiqueta = paste0("<div style='font-size: 14px;'><b>Comuna: ", nombre_comuna, "</b><br><hr style='margin: 4px 0;'>",
+                              "Total de Medidas: ", valor_mapa, "</div>")
+          )
+        leyenda_titulo <- "Total de<br>Medidas"
+      }
+      
+      vals_valid <- na.omit(mapa_zonas_datos$valor_mapa[mapa_zonas_datos$valor_mapa > 0])
+      
+      if(length(vals_valid) > 0) {
+        rng <- range(trans_val(vals_valid), na.rm = TRUE)
+        if(is.infinite(rng[1])) rng <- c(0, 1)
+        if(rng[1] == rng[2]) rng[2] <- rng[1] + 1
+        paleta <- colorNumeric(palette = "Greens", domain = rng, na.color = "#e8e8e8")
+      } else {
+        paleta <- function(x) "#e8e8e8"
+      }
+      
+      mapa_zonas_datos <- mapa_zonas_datos %>%
+        mutate(
+          color_fill = case_when(
+            is.na(valor_mapa) | valor_mapa == 0 ~ "#ffffff",
+            TRUE ~ unname(paleta(trans_val(valor_mapa)))
+          )
         )
-      ) %>%
-      addLegend(
-        pal = paleta, 
-        values = valores_leyenda, 
-        title = "Promedio de<br>Medidas<br>(Comunas Activas)", 
-        position = "bottomright"
+      
+      l <- leaflet(mapa_zonas_datos) %>%
+        addPolygons(
+          fillColor = ~color_fill, weight = 1.5, color = "#444444", fillOpacity = ~opacidad,
+          highlightOptions = highlightOptions(weight = 3, color = "#000000", bringToFront = TRUE),
+          label = ~lapply(etiqueta, HTML), 
+          labelOptions = labelOptions(noHide = etiquetas_visibles, style = list("font-weight" = "normal", padding = "8px", "box-shadow" = "3px 3px rgba(0,0,0,0.25)"), textsize = "13px", direction = "auto")
+        )
+      
+      if(length(vals_valid) > 0) {
+        l <- l %>% addLegend(pal = paleta, values = trans_val(vals_valid), title = leyenda_titulo, 
+                             labFormat = formato_leyenda_limpio, position = "bottomright")
+      }
+      l
+      
+    } else {
+      t <- map_res$var_type
+      if (map_res$tipo == "zona_capa0") {
+        mapa_zonas <- mapa_rm %>% group_by(zona) %>% summarise(geometry = st_union(geometry), .groups = "drop")
+        mapa_zonas_datos <- mapa_zonas %>% left_join(datos_mapa, by = c("zona" = "codigo_comuna")) 
+      } else {
+        mapa_zonas_datos <- mapa_rm %>% select(codigo_comuna, geometry) %>% left_join(datos_mapa, by = "codigo_comuna")
+      }
+      
+      mapa_zonas_datos <- mapa_zonas_datos %>% mutate(
+        opacidad = case_when(
+          is.na(val_num) & is.na(val_cat) ~ 0.15,
+          !is.na(val_num) & val_num == 0 ~ 0.15,
+          t %in% c("Número", "Dinero") & !is.na(val_cat) ~ 0.15, 
+          TRUE ~ 0.85
+        )
       )
+      
+      colores_base <- c("#e67e22", "#e74c3c", "#2ecc71", "#f1c40f", "#95a5a6", "#d35400", "#16a085")
+      
+      if(t %in% c("Número", "Dinero", "Lista")) {
+        nums_valid <- na.omit(mapa_zonas_datos$val_num[mapa_zonas_datos$val_num > 0])
+        
+        if(length(nums_valid) > 0) {
+          rng <- range(trans_val(nums_valid), na.rm = TRUE)
+          if(is.infinite(rng[1])) rng <- c(0, 1)
+          if(rng[1] == rng[2]) rng[2] <- rng[1] + 1
+          pal_num <- colorNumeric(palette = "Blues", domain = rng)
+        } else {
+          pal_num <- function(x) "#e8e8e8"
+        }
+        
+        cats <- unique(unlist(strsplit(na.omit(mapa_zonas_datos$val_cat), " \\+ ")))
+        cat_to_col <- setNames(rep_len(colores_base, length(cats)), cats)
+        
+        mapa_zonas_datos <- mapa_zonas_datos %>%
+          mutate(
+            color_fill = case_when(
+              !is.na(val_num) & val_num == 0 ~ "#ffffff",
+              !is.na(val_num) ~ unname(pal_num(trans_val(val_num))),
+              !is.na(val_cat) & val_cat %in% names(cat_to_col) ~ unname(cat_to_col[val_cat]),
+              TRUE ~ "#ffffff"
+            ),
+            val_str = case_when(
+              !is.na(val_num) & !is.na(val_cat) & t == "Dinero" ~ paste0("$", format(val_num, big.mark = ".", decimal.mark=","), " [ + ", val_cat, " ]"),
+              !is.na(val_num) & !is.na(val_cat) & t == "Lista" ~ paste0(val_num, " elemento(s) [ + ", val_cat, " ]"),
+              !is.na(val_num) & !is.na(val_cat) ~ paste0(format(val_num, big.mark = ".", decimal.mark=","), " [ + ", val_cat, " ]"),
+              !is.na(val_num) & t == "Dinero" ~ paste0("$", format(val_num, big.mark = ".", decimal.mark=",")),
+              !is.na(val_num) & t == "Lista" ~ paste0(val_num, " elemento(s)"),
+              !is.na(val_num) ~ format(val_num, big.mark = ".", decimal.mark=","),
+              !is.na(val_cat) ~ val_cat,
+              TRUE ~ "Sin Registro"
+            ),
+            etiqueta = paste0("<div style='font-size: 14px;'><b>", nombre_comuna, "</b><br><hr style='margin: 4px 0;'>",
+                              "Variable: ", map_res$var_name, "<br>",
+                              "Valor: <b>", val_str, "</b><br><br>",
+                              "<i>Total Medidas PACCC: ", cantidad_medidas, "</i></div>")
+          )
+      } else {
+        pal_cat <- colorFactor(c("#2ecc71", "#e74c3c", "#bdc3c7"), domain = c("Verdadero", "Falso", "NA (Sin Info)"))
+        mapa_zonas_datos <- mapa_zonas_datos %>%
+          mutate(
+            color_fill = unname(pal_cat(val_cat)),
+            etiqueta = paste0("<div style='font-size: 14px;'><b>", nombre_comuna, "</b><br><hr style='margin: 4px 0;'>",
+                              "Estado: <b>", val_cat, "</b><br>",
+                              "<i>", ifelse(val_cat == 'Verdadero' | val_cat == 'Falso', val_raw, ''), "</i></div>")
+          )
+      }
+      
+      l <- leaflet(mapa_zonas_datos) %>%
+        addPolygons(
+          fillColor = ~color_fill, weight = 1.5, color = "#444444", fillOpacity = ~opacidad,
+          highlightOptions = highlightOptions(weight = 3, color = "#000000", bringToFront = TRUE),
+          label = ~lapply(etiqueta, HTML), 
+          labelOptions = labelOptions(noHide = etiquetas_visibles, style = list("font-weight" = "normal", padding = "8px", "box-shadow" = "3px 3px rgba(0,0,0,0.25)"), textsize = "13px", direction = "auto")
+        )
+      
+      if(t %in% c("Número", "Dinero", "Lista")) {
+        if(length(nums_valid) > 0) l <- l %>% addLegend(pal = pal_num, values = trans_val(nums_valid), title = map_res$var_name, labFormat = formato_leyenda_limpio, position = "bottomright")
+        if(length(cats) > 0) l <- l %>% addLegend(colors = unname(cat_to_col[cats]), labels = cats, title = "Otros Valores", position = "bottomleft")
+      } else {
+        l <- l %>% addLegend(colors = c("#2ecc71", "#e74c3c", "#bdc3c7"), labels = c("Verdadero (Con Dato)", "Falso (No / 0)", "Sin Información"), title = "Estado", position = "bottomright")
+      }
+      l
+    }
   })
   
   # ====================================================================
-  # LÓGICA DE DESCARGA: DATOS TABULARES A EXCEL
+  # EXPORTACIÓN EXCEL Y PNG
   # ====================================================================
   output$dl_data_excel <- downloadHandler(
-    filename = function() {
-      paste0("Exportacion_Datos_", input$viz_mode, "_", Sys.Date(), ".xlsx")
-    },
+    filename = function() { paste0("Exportacion_Datos_", input$viz_mode, "_", Sys.Date(), ".xlsx") },
     content = function(file) {
-      mode <- input$viz_mode
-      view_mode <- input$wc_view_mode
+      mode <- input$viz_mode; nlp_type <- input$nlp_type
       
-      # Retorna exactamente el conjunto de datos que alimenta al gráfico actual
       dataset_to_export <- switch(mode,
                                   "freq" = freq_data_reac(),
                                   "sankey" = sankey_data_reac(),
                                   "network" = network_data_reac(),
-                                  "map" = map_data_reac(),
-                                  "chord" = chord_data_reac(),
+                                  "map" = map_data_reac()$data,
                                   "corrmatrix" = {
-                                    # Transforma la matriz de correlación en un dataframe amigable para Excel
                                     r_mat <- corr_data_reac()
-                                    if(!is.null(r_mat)) {
-                                      df <- as.data.frame(r_mat)
-                                      cbind(Variable = rownames(df), df)
-                                    } else NULL
+                                    if(!is.null(r_mat)) { cbind(Variable = rownames(as.data.frame(r_mat)), as.data.frame(r_mat)) } else NULL
                                   },
-                                  "wordcloud" = if(!is.null(view_mode) && view_mode == "heatmap") hm_global_data_reac() else wc_global_data_reac(),
-                                  "wordcloud_unique" = if(!is.null(view_mode) && view_mode == "heatmap") hm_unique_data_reac() else wc_unique_data_reac()
+                                  "nlp" = {
+                                    if(nlp_type == "global") wc_global_data_reac() else wc_unique_data_reac()
+                                  }
       )
-      
       req(dataset_to_export)
       writexl::write_xlsx(dataset_to_export, path = file)
     }
   )
   
-  # ====================================================================
-  # DESCARGAS A PNG (webshot2)
-  # ====================================================================
   generar_png_desde_html <- function(widget_obj, file_path) {
     req(widget_obj)
     temp_html <- tempfile(fileext = ".html")
@@ -1517,96 +1801,29 @@ server <- function(input, output, session) {
     webshot2::webshot(temp_html, file = file_path, delay = 1.5, vwidth = 1200, vheight = 800)
   }
   
-  output$dl_wc_global <- downloadHandler(
-    filename = function() { "wordcloud_global.png" },
+  output$dl_nlp <- downloadHandler(
+    filename = function() { paste0("NubePalabras_", input$nlp_type, ".png") },
     content = function(file) {
-      freqs <- wc_global_data_reac()
-      req(freqs)
-      widget_obj <- wordcloud2(head(freqs[, c("word", "freq")], 100), size = 0.6)
-      generar_png_desde_html(widget_obj, file) 
-    }
-  )
-  
-  output$dl_hm_global <- downloadHandler(
-    filename = function() { "heatmap_global.png" },
-    content = function(file) {
-      heat_df <- hm_global_data_reac()
-      req(heat_df)
-      group_col <- if("Plan" %in% names(viz_data())) "Plan" else "ID"
-      widget_obj <- plot_ly(heat_df, x = ~Grupo, y = ~word, z = ~n, type = "heatmap", colors = colorRamp(c("#f7fbff", "#08306b"))) %>%
-        layout(title = "Frecuencia de Top Términos", xaxis = list(title = group_col), yaxis = list(title = "Término")) %>% config(displayModeBar = FALSE)
+      if(input$nlp_type == "global") {
+        widget_obj <- wordcloud2(head(wc_global_data_reac()[, c("word", "freq")], 100), size = 0.6) 
+      } else {
+        widget_obj <- wordcloud2(head(wc_unique_data_reac()[, c("word", "freq")], 80), size = 0.6, color = "random-light", backgroundColor = "#2c3e50")
+      }
       generar_png_desde_html(widget_obj, file) 
     }
   )
   
   observe({
-    df <- viz_data()
-    req(input$unique_group_col %in% names(df))
+    df <- viz_data(); req(input$unique_group_col %in% names(df))
     opciones <- unique(na.omit(df[[input$unique_group_col]]))
     updateSelectInput(session, "unique_group_val", choices = opciones)
   })
   
-  output$dl_wc_unique <- downloadHandler(
-    filename = function() { paste0("wordcloud_unique_", input$unique_group_val, ".png") },
-    content = function(file) {
-      freqs <- wc_unique_data_reac()
-      req(freqs)
-      widget_obj <- wordcloud2(head(freqs[, c("word", "freq")], 80), size = 0.6, color = "random-light", backgroundColor = "#2c3e50")
-      generar_png_desde_html(widget_obj, file) 
-    }
-  )
-  
-  output$dl_hm_unique <- downloadHandler(
-    filename = function() { paste0("heatmap_unique_", input$unique_group_val, ".png") },
-    content = function(file) { 
-      heat_df <- hm_unique_data_reac()
-      req(heat_df)
-      widget_obj <- plot_ly(heat_df, x = ~Grupo, y = ~word, z = ~n, type = "heatmap", colors = colorRamp(c("#fdfbfb", "#e74c3c"))) %>%
-        layout(title = paste("Keyness:", input$unique_group_val), xaxis = list(title = input$unique_group_col), yaxis = list(title = "Término Clave")) %>% config(displayModeBar = FALSE)
-      generar_png_desde_html(widget_obj, file) 
-    }
-  )
-  
-  output$dl_sankey <- downloadHandler(
-    filename = function() { "sankey_dinamico.png" },
-    content = function(file) { # ... lógica repetida o aislar ... (por brevedad se asume aislada si se requiere)
-      # La lógica de PNG requiere renderizar de nuevo el HTML, usaríamos webshot
-    }
-  )
-  
-  output$dl_freq <- downloadHandler(
-    filename = function() { "distribucion_frecuencias.png" },
-    content = function(file) { # Igual
-    }
-  )
-  
-  output$dl_network <- downloadHandler(
-    filename = function() { "red_colaboradores.png" },
-    content = function(file) { # Igual
-    }
-  )
-  
-  output$dl_chord <- downloadHandler(
-    filename = function() { paste0("diagrama_cuerdas_interactivo_", Sys.Date(), ".png") },
-    content = function(file) {
-      mat <- chord_matrix_reac()
-      req(mat)
-      widget_obj <- chorddiag(mat, type = "directional", showTicks = FALSE, groupnamePadding = 15, groupnameFontsize = 13, margin = 120)
-      generar_png_desde_html(widget_obj, file)
-    }
-  )
-  
-  output$dl_corr <- downloadHandler(
-    filename = function() { paste0("correlograma_", Sys.Date(), ".png") },
-    content = function(file) { # ...
-    }
-  )
-  
-  output$dl_map <- downloadHandler(
-    filename = function() { paste0("mapa_territorial_", Sys.Date(), ".png") },
-    content = function(file) { # ...
-    }
-  )
+  output$dl_sankey <- downloadHandler(filename = function() { "sankey_dinamico.png" }, content = function(file) { })
+  output$dl_freq <- downloadHandler(filename = function() { "distribucion_frecuencias.png" }, content = function(file) { })
+  output$dl_network <- downloadHandler(filename = function() { "red_colaboradores.png" }, content = function(file) { })
+  output$dl_corr <- downloadHandler(filename = function() { paste0("correlograma_", Sys.Date(), ".png") }, content = function(file) { })
+  output$dl_map <- downloadHandler(filename = function() { paste0("mapa_territorial_", Sys.Date(), ".png") }, content = function(file) { })
 }
 
 shinyApp(ui = ui, server = server)
