@@ -33,8 +33,15 @@ library(chilemapas)
 library(writexl)
 
 # ==============================================================================
-# DICCIONARIO DE FALSOS VERBOS
+# CONSTANTES Y DICCIONARIOS GLOBALES
 # ==============================================================================
+
+# -----------------------------------------------------------------------------
+# VARIABLE MAESTRA DE TAMAÑO DE FUENTE
+# Modifica este número para agrandar (ej. 2) o achicar (ej. -1) todas las fuentes
+font_plus <- 0  
+# -----------------------------------------------------------------------------
+
 falsos_verbos <- c(
   "circular", "solar", "lugar", "mujer", "primer", "tercer", "taller", 
   "cualquier", "mar", "hogar", "celular", "familiar", "particular", 
@@ -42,22 +49,21 @@ falsos_verbos <- c(
   "bienestar", "super", "estándar", "militar", "similar"
 )
 
-# ==============================================================================
-# DICCIONARIO DE ZONAS RM (CON CÓDIGOS INE PARA EVITAR ERRORES DE TEXTO)
-# ==============================================================================
+sectores_actores <- c("Academia", "Sector Público", "Sociedad Civil", "Sector Privado")
+
 zonas_rm <- data.frame(
   codigo_comuna = c(
     "13101", "13104", "13107", "13108", "13125", "13127", 
     "13123", "13114", "13132", "13115", "13120", "13113", 
-    "13118", "13122", "13110",                            
+    "13118", "13122", "13110",                             
     "13130", "13129", "13121", "13116", "13109", "13131", "13111", "13105", "13112", 
-    "13106", "13102", "13119",                            
+    "13106", "13102", "13119",                             
     "13126", "13117", "13124", "13103", "13128",          
-    "13301", "13302", "13303",                            
-    "13201", "13202", "13203",                            
-    "13401", "13402", "13403", "13404",                   
+    "13301", "13302", "13303",                             
+    "13201", "13202", "13203",                             
+    "13401", "13402", "13403", "13404",                    
     "13501", "13502", "13503", "13504", "13505",          
-    "13601", "13602", "13603", "13604", "13605"           
+    "13601", "13602", "13603", "13604", "13605"            
   ),
   nombre_comuna = c(
     "Santiago", "Conchalí", "Huechuraba", "Independencia", "Quilicura", "Recoleta",
@@ -90,8 +96,7 @@ leer_csv_robusto <- function(ruta) {
     "Ã " = "à", "Ã¨" = "è", "Ã¬" = "ì", "Ã²" = "ò", "Ã¹" = "ù",
     "Ã\u0081" = "Á", "Ã‰" = "É", "Ã\u008d" = "Í", "Ã“" = "Ó", "Ãš" = "Ú", "Ã‘" = "Ñ",
     "Âº" = "º", "Â¿" = "¿", "Â¡" = "¡", "Ã¼" = "ü", "Ãœ" = "Ü", 
-    "â€œ" = "\"", "â€\u009d" = "\"", "â€˜" = "'", "â€™" = "'", "â€“" = "-", "â€”" = "-",
-    "ï»¿" = "", "\ufeff" = "" 
+    "â€œ" = "\"", "â€\u009d" = "\"", "â€˜" = "'", "â€™" = "'", "â€“" = "-", "â€”" = "-"
   )
   
   encodings <- readr::guess_encoding(ruta)
@@ -164,6 +169,159 @@ resolve_metadata <- function(vals, rule) {
     all_terms <- unlist(strsplit(v_clean, ";\\s*"))
     return(paste(unique(trimws(all_terms)), collapse = "; "))
   } else { return(paste0("[CONFLICTO: ", paste(v_clean, collapse = " vs "), "]")) }
+}
+
+# ==============================================================================
+# FUNCIONES DE METODOLOGÍA Y CITACIÓN AUTOMÁTICA DE PAQUETES R
+# ==============================================================================
+extraer_apellido_autor <- function(p) {
+  fam <- paste(p$family, collapse = " ")
+  if (nzchar(trimws(fam))) return(trimws(fam))
+  giv <- paste(p$given, collapse = " ")
+  if (nzchar(trimws(giv))) return(trimws(giv))
+  return("Autor s.d.")
+}
+
+obtener_cita_corta <- function(pkg) {
+  tryCatch({
+    cit <- if (pkg == "base") citation() else citation(pkg)
+    entry <- cit[[1]]
+    autores <- entry$author
+    
+    anio <- entry$year
+    if (is.null(anio) || !nzchar(trimws(anio))) {
+      if (!is.null(entry$date) && nzchar(trimws(entry$date))) {
+        anio <- substr(trimws(entry$date), 1, 4)
+      } else {
+        anio <- "s.f."
+      }
+    }
+    
+    if (length(autores) == 0) {
+      autor_txt <- pkg
+    } else if (length(autores) == 1) {
+      autor_txt <- extraer_apellido_autor(autores[[1]])
+    } else if (length(autores) == 2) {
+      autor_txt <- paste(extraer_apellido_autor(autores[[1]]), "&", extraer_apellido_autor(autores[[2]]))
+    } else {
+      autor_txt <- paste0(extraer_apellido_autor(autores[[1]]), " et al.")
+    }
+    
+    nombre_pkg <- if (pkg == "base") "R" else pkg
+    paste0(nombre_pkg, " (", autor_txt, ", ", anio, ")")
+  }, error = function(e) {
+    paste0(pkg, " (ver citation('", pkg, "'))")
+  })
+}
+
+obtener_cita_completa <- function(pkg) {
+  tryCatch({
+    cit <- if (pkg == "base") citation() else citation(pkg)
+    txt <- paste(format(cit, style = "text"), collapse = " | ")
+    stringr::str_squish(gsub("[\r\n]+", " ", txt))
+  }, error = function(e) {
+    paste0("Paquete no disponible localmente. Ejecutar citation('", pkg, "') en R.")
+  })
+}
+
+obtener_version_paquete <- function(pkg) {
+  tryCatch({
+    if (pkg == "base") as.character(getRversion()) else as.character(packageVersion(pkg))
+  }, error = function(e) "N/A")
+}
+
+citar_paquetes_vec <- function(pkgs) {
+  paste(vapply(pkgs, obtener_cita_corta, character(1)), collapse = "; ")
+}
+
+construir_tabla_metodologias <- function() {
+  data.frame(
+    Capa_Modulo = c(
+      "Capa 0 y 1.0 - Ingesta y Estandarización",
+      "Capa 1.5 y 2.0 - Reclasificación y Curación",
+      "Capa 1.8 - Limpieza de Actores",
+      "Capa 2.5 - Consenso Multi-Revisor",
+      "Capa 3.1 - NLP: Frecuencia Global y Ponderación por Dispersión",
+      "Capa 3.1 - NLP: Exclusividad Léxica (Keyness)",
+      "Capa 3.2 - Distribución de Frecuencias",
+      "Capa 3.3 - Flujo Dinámico (Sankey)",
+      "Capa 3.4 - Red Bipartita e Índice de Simbiosis",
+      "Capa 3.5 - Matriz de Correlaciones (Co-ocurrencia / Exclusión)",
+      "Capa 3.6 - Cartografía Territorial (Región Metropolitana)",
+      "Capa 1.9 y 3.7 - Mapeo de Actores por Cuadrantes",
+      "Capa 3.8 - Boxplot Territorial",
+      "Capa 3 y 4 - Exportación Reproducible (Excel, PNG y BibTeX)"
+    ),
+    Metodo_y_Criterio = c(
+      "Detección automática de codificación, corrección de mojibake, detección de delimitador (',' o ';'), normalización de espacios y asignación de llave primaria incremental (ID).",
+      "Codificación guiada por diccionario dinámico de variables (texto libre, selección única y múltiple con acrónimos) y trazabilidad del registro original por ID.",
+      "Separación de colaboradores múltiples delimitados por ';', homologación por reglas de reemplazo y deduplicación automática por medida.",
+      "Consolidación de evaluaciones independientes agrupadas por ID mediante dos reglas ante disenso: unión inclusiva de categorías o marcaje explícito de [CONFLICTO].",
+      "Tokenización en unigramas, bigramas o ambos integrando los campos Medida y Descripción (apilados bajo el mismo grupo para preservar el límite entre ambos y evitar bigramas espurios); remoción de stopwords y filtro opcional de verbos infinitivos (-ar/-er/-ir excluyendo falsos verbos). Cálculo clásico (f) o ponderado por dispersión entre grupos: f_pond = f * (g_w / G), reteniendo términos presentes en más de un grupo cuando G > 1.",
+      "Construcción de matriz documento-término (DFM) sobre los campos Medida y Descripción (preservando el límite entre ambos para bigramas) agrupada por Plan, Eje o Área (desagregando valores separados por ';') y prueba de especificidad léxica Chi-cuadrado (chi2) del grupo objetivo frente al resto del corpus, filtrando términos sobrerrepresentados y significativos (chi2 > 0 y p < 0.05).",
+      "Desagregación de variables multicategoría (';') y ranking Top 20, con opción de conteo clásico o ponderación fraccional equitativa (w = 1/N por fila con N categorías) para evitar sobreconteo.",
+      "Cruce de frecuencias de transición entre dos dimensiones seleccionadas tras desagregación por ';', con mapeo de etiquetas (original, nombre completo o acrónimo).",
+      "Grafo bipartito Plan–Colaborador Externo con pesos por frecuencia de co-mención, diseño físico ForceAtlas2Based y Tasa de Simbiosis: (sum(E_comp) / sum(E_tot)) * (1 - P_aislados / P_tot), midiendo cohesión compartida penalizada por planes aislados.",
+      "Codificación binaria (variables dummy 0/1) por ID para categorías seleccionadas, filtro de frecuencia mínima y cálculo de matriz de correlación de Pearson (equivalente al coeficiente phi para variables binarias), ocultando categorías cuyo |r| máximo fuera de la diagonal no supera el umbral.",
+      "Emparejamiento normalizado de nombres comunales con límites administrativos oficiales en CRS WGS84 (EPSG:4326), agregación por comuna o macrozona (unión geométrica) y escalado de color lineal o logarítmico: sign(x) * log10(|x| + 1).",
+      "Asignación de actores a cuatro sectores (Sociedad Civil, Sector Público, Academia, Sector Privado), ubicación por centroide para actores multisectoriales con dispersión controlada (jitter reproducible), tamaño proporcional a la frecuencia y opacidad por densidad relativa del cuadrante.",
+      "Resumen no paramétrico (mediana, rango intercuartílico y valores atípicos) de medidas o variables numéricas/lista de Capa 0 agrupadas por zona territorial de la RM, ordenadas descendentemente por mediana.",
+      "Exportación tabular a Excel (.xlsx) y CSV compatible con Excel (UTF-8 BOM, ';'), citas bibliográficas en BibTeX (.bib) y renderizado de widgets HTML a PNG de alta resolución mediante Chromium headless."
+    ),
+    Paquetes_y_Citas = c(
+      citar_paquetes_vec(c("readr", "dplyr", "stringr", "DT")),
+      citar_paquetes_vec(c("shiny", "bslib", "shinyjs", "DT", "dplyr")),
+      citar_paquetes_vec(c("dplyr", "tidyr", "stringr", "readr")),
+      citar_paquetes_vec(c("dplyr", "readr", "DT")),
+      citar_paquetes_vec(c("tidytext", "dplyr", "tidyr", "stringr", "wordcloud2")),
+      citar_paquetes_vec(c("quanteda", "quanteda.textstats", "tidytext", "tidyr", "wordcloud2")),
+      citar_paquetes_vec(c("dplyr", "tidyr", "stringr", "plotly")),
+      citar_paquetes_vec(c("dplyr", "tidyr", "plotly")),
+      citar_paquetes_vec(c("visNetwork", "dplyr", "tidyr", "stringr")),
+      citar_paquetes_vec(c("base", "dplyr", "tidyr", "plotly")),
+      citar_paquetes_vec(c("chilemapas", "sf", "leaflet", "dplyr")),
+      citar_paquetes_vec(c("dplyr", "tidyr", "plotly")),
+      citar_paquetes_vec(c("dplyr", "stringr", "plotly")),
+      citar_paquetes_vec(c("writexl", "readr", "htmlwidgets", "webshot2"))
+    ),
+    stringsAsFactors = FALSE
+  )
+}
+
+construir_tabla_referencias <- function() {
+  pkgs <- c("base", paquetes_requeridos)
+  roles <- c(
+    "Entorno estadístico base y cálculo de correlaciones (stats)",
+    "Framework reactivo de la aplicación web",
+    "Tema visual Bootstrap 5 y componentes de tarjetas/layout",
+    "Tablas interactivas editables y filtrables",
+    "Manipulación y agregación de datos tabulares",
+    "Tokenización de texto (unigramas/bigramas) y conversión a DFM",
+    "Procesamiento y normalización de cadenas de texto",
+    "Operaciones JavaScript auxiliares en la interfaz Shiny",
+    "Gráficos interactivos (barras, Sankey, heatmap, cuadrantes, boxplot)",
+    "Generación de nubes de palabras interactivas",
+    "Transformación de formatos largos/anchos y separación de filas",
+    "Visualización y física de redes bipartitas interactivas",
+    "Lectura robusta con detección de encoding y escritura CSV Excel",
+    "Construcción y manejo de matrices documento-término (DFM)",
+    "Cálculo estadístico de Keyness (prueba Chi-cuadrado)",
+    "Empaquetado e inyección CSS para exportación de widgets HTML",
+    "Captura de pantalla de alta resolución desde HTML a PNG",
+    "Mapas interactivos coropléticos y leyendas",
+    "Manejo de datos espaciales vectoriales (Simple Features, st_union)",
+    "Cartografía administrativa oficial de comunas de Chile",
+    "Exportación nativa de libros y hojas Excel (.xlsx)"
+  )
+  
+  data.frame(
+    Paquete = ifelse(pkgs == "base", "R (base / stats)", pkgs),
+    Version = vapply(pkgs, obtener_version_paquete, character(1)),
+    Rol_en_la_App = roles,
+    Cita_Corta = vapply(pkgs, obtener_cita_corta, character(1)),
+    Referencia_Completa = vapply(pkgs, obtener_cita_completa, character(1)),
+    stringsAsFactors = FALSE
+  )
 }
 
 # ==============================================================================
@@ -242,50 +400,108 @@ ui <- page_sidebar(
               )
     ),
     
-    nav_panel("Capa 1: Base Bruta", icon = icon("table"), DTOutput("results_table")),
-    
-    nav_panel("Capa 1.5: Setear Reclasificación", icon = icon("list-check"), br(),
-              fluidRow(
-                column(5, card(card_header("1. Editar o Crear Variable", class = "bg-primary text-white"), card_body(
-                  selectInput("q_select", "Seleccionar Variable:", choices = c("--- CREAR NUEVA ---")),
-                  conditionalPanel(condition = "input.q_select == '--- CREAR NUEVA ---'",
-                                   textInput("q_name_new", "Nombre de la Nueva Variable:")),
-                  selectInput("q_type", "Tipo de Campo:", choices = c("Text Field", "Single Choice", "Multiple Choice")),
-                  conditionalPanel(condition = "input.q_type != 'Text Field'", hr(), h6("Opciones de Clasificación"), 
-                                   textInput("c_name", "Nombre Opción"), textInput("c_acronym", "Acrónimo"), 
-                                   div(style="display:flex; gap:10px;",
-                                       actionButton("add_choice_btn", "Agregar Opción", class = "btn-light btn-sm mt-2"),
-                                       actionButton("clear_choices_btn", "Limpiar", class = "btn-warning btn-sm mt-2")
-                                   ),
-                                   br(), br(), DTOutput("current_choices_tbl")), 
-                  hr(), 
-                  fluidRow(
-                    column(6, actionButton("delete_selected_q_btn", "Eliminar Variable", class = "btn-danger", width = "100%", icon = icon("trash"))),
-                    column(6, actionButton("save_question_btn", "Guardar Variable", class = "btn-success", width = "100%", icon = icon("save")))
-                  )
-                ))),
-                column(7, card(card_header("2. Diccionario de Variables Actual", class = "bg-info text-white"), card_body(
-                  downloadButton("export_word_dict_btn", "Exportar a Word", class = "btn-secondary mb-3", icon = icon("file-word")),
-                  DTOutput("questions_set_tbl")
-                )))
-              )
+    # AGRUPACIÓN DE CAPAS 1 (PREPARACIÓN DE DATOS)
+    nav_menu("Capa 1: Preparación de Datos", icon = icon("database"),
+             nav_panel("1.0 Base Bruta", icon = icon("table"), DTOutput("results_table")),
+             
+             nav_panel("1.5 Setear Reclasificación", icon = icon("list-check"), br(),
+                       fluidRow(
+                         column(5, card(card_header("1. Editar o Crear Variable", class = "bg-primary text-white"), card_body(
+                           selectInput("q_select", "Seleccionar Variable:", choices = c("--- CREAR NUEVA ---")),
+                           conditionalPanel(condition = "input.q_select == '--- CREAR NUEVA ---'",
+                                            textInput("q_name_new", "Nombre de la Nueva Variable:")),
+                           selectInput("q_type", "Tipo de Campo:", choices = c("Text Field", "Single Choice", "Multiple Choice")),
+                           conditionalPanel(condition = "input.q_type != 'Text Field'", hr(), h6("Opciones de Clasificación"), 
+                                            textInput("c_name", "Nombre Opción"), textInput("c_acronym", "Acrónimo"), 
+                                            div(style="display:flex; gap:10px;",
+                                                actionButton("add_choice_btn", "Agregar Opción", class = "btn-light btn-sm mt-2"),
+                                                actionButton("clear_choices_btn", "Limpiar", class = "btn-warning btn-sm mt-2")
+                                            ),
+                                            br(), br(), DTOutput("current_choices_tbl")), 
+                           hr(), 
+                           fluidRow(
+                             column(6, actionButton("delete_selected_q_btn", "Eliminar Variable", class = "btn-danger", width = "100%", icon = icon("trash"))),
+                             column(6, actionButton("save_question_btn", "Guardar Variable", class = "btn-success", width = "100%", icon = icon("save")))
+                           )
+                         ))),
+                         column(7, card(card_header("2. Diccionario de Variables Actual", class = "bg-info text-white"), card_body(
+                           downloadButton("export_word_dict_btn", "Exportar a Word", class = "btn-secondary mb-3", icon = icon("file-word")),
+                           DTOutput("questions_set_tbl")
+                         )))
+                       )
+             ),
+             
+             nav_panel("1.8 Limpieza de Actores", icon = icon("broom"), br(),
+                       fluidRow(
+                         column(4, card(
+                           card_header("1. Definir Regla de Limpieza", class = "bg-primary text-white"),
+                           card_body(
+                             selectInput("actor_col_clean", "Columna a limpiar:", choices = NULL),
+                             selectizeInput("actor_to_replace", "Actor a modificar (con error/sinónimo):", choices = NULL, multiple = TRUE, options = list(placeholder = "Selecciona uno o más...")),
+                             textInput("actor_replacement", "Nuevo valor (corregido):", placeholder = "Ej: Seremi RM"),
+                             
+                             actionButton("apply_clean_actor_btn", "Aplicar y Guardar Corrección", class = "btn-warning text-dark", width = "100%", icon = icon("magic")),
+                             
+                             br(),
+                             p(style="font-size: 0.85em; color: #666; margin-top: 15px;", 
+                               "Tip: Haz clic en una fila de la tabla para cargar automáticamente el nombre del actor.")
+                           )
+                         )),
+                         column(8, card(
+                           card_header("2. Frecuencia de Actores Actuales", class = "bg-info text-white"),
+                           card_body(
+                             DTOutput("actors_freq_table")
+                           )
+                         ))
+                       )
+             ),
+             
+             nav_panel("1.9 Clasificación de Actores (Cuadrantes)", icon = icon("th"), br(),
+                       fluidRow(
+                         column(3, card(
+                           card_header("1. Asignar Sectores (Lote)", class = "bg-primary text-white"),
+                           card_body(
+                             selectizeInput("actor_to_classify", "Actor(es) a clasificar:", choices = NULL, multiple = TRUE, options = list(placeholder = 'Selecciona uno o varios...')),
+                             selectizeInput("actor_sectors", "Cuadrante(s) asignado(s):", choices = sectores_actores, multiple = TRUE, options = list(placeholder = 'Seleccione sector(es)')),
+                             actionButton("save_actor_class_btn", "Guardar Clasificación", class = "btn-success", width = "100%", icon = icon("save")),
+                             hr(),
+                             actionButton("clear_actor_class_btn", "Limpiar Seleccionados", class = "btn-danger btn-sm", width = "100%", icon = icon("trash-alt")),
+                             br(),
+                             p(style="font-size: 0.85em; color: #666; margin-top: 15px;", 
+                               "Tip: Haz clic en las filas de las tablas para seleccionar múltiples actores rápidamente.")
+                           )
+                         )),
+                         column(4, card(
+                           card_header("2. Pendientes por Clasificar", class = "bg-warning text-dark"),
+                           card_body(DTOutput("actors_unclass_table"))
+                         )),
+                         column(5, card(
+                           card_header("3. Directorio de Actores Clasificados", class = "bg-info text-white"),
+                           card_body(DTOutput("actors_class_table"))
+                         ))
+                       )
+             )
     ),
     
-    nav_panel("Capa 2: Curación de Medidas", icon = icon("user-edit"), br(), uiOutput("curation_ui")),
-    
-    nav_panel("Capa 2.5: Fusión de Evaluaciones", icon = icon("handshake"), br(),
-              fluidRow(
-                column(4, card(card_header("Subir Evaluaciones"), card_body(
-                  fileInput("consensus_files", "Sube los CSV de los revisores:", multiple = TRUE, accept = ".csv"),
-                  radioButtons("meta_rule", "Regla ante Disenso:", choices = c("A. Unión Inclusiva" = "union", "B. Marcar [CONFLICTO]" = "conflict"), selected = "union"),
-                  actionButton("run_consensus_btn", "Generar Dataset Maestro", class="btn-success", width="100%")
-                ))),
-                column(8, card(card_header("Dataset Maestro Consolidado"), card_body(
-                  DTOutput("consensus_table"), hr(), downloadButton("export_consensus_btn", "Descargar Dataset Maestro", class="btn-dark text-white")
-                )))
-              )
+    # AGRUPACIÓN DE CAPAS 2 (EVALUACIÓN Y CONSOLIDACIÓN)
+    nav_menu("Capa 2: Evaluación y Curación", icon = icon("user-edit"),
+             nav_panel("2.0 Curación de Medidas", icon = icon("edit"), br(), uiOutput("curation_ui")),
+             
+             nav_panel("2.5 Fusión de Evaluaciones", icon = icon("handshake"), br(),
+                       fluidRow(
+                         column(4, card(card_header("Subir Evaluaciones"), card_body(
+                           fileInput("consensus_files", "Sube los CSV de los revisores:", multiple = TRUE, accept = ".csv"),
+                           radioButtons("meta_rule", "Regla ante Disenso:", choices = c("A. Unión Inclusiva" = "union", "B. Marcar [CONFLICTO]" = "conflict"), selected = "union"),
+                           actionButton("run_consensus_btn", "Generar Dataset Maestro", class="btn-success", width="100%")
+                         ))),
+                         column(8, card(card_header("Dataset Maestro Consolidado"), card_body(
+                           DTOutput("consensus_table"), hr(), downloadButton("export_consensus_btn", "Descargar Dataset Maestro", class="btn-dark text-white")
+                         )))
+                       )
+             )
     ),
     
+    # CAPA 3 (ANÁLISIS)
     nav_panel("Capa 3: Análisis Visual", icon = icon("chart-pie"), br(),
               layout_sidebar(
                 sidebar = sidebar(
@@ -302,7 +518,15 @@ ui <- page_sidebar(
                                           "3. Flujo Dinámico (Sankey)" = "sankey", 
                                           "4. Red Plan vs Actores" = "network",
                                           "5. Matriz de Correlaciones" = "corrmatrix",
-                                          "6. Mapa Territorial RM" = "map")), hr(),
+                                          "6. Mapa Territorial RM" = "map",
+                                          "7. Mapa de Actores (Cuadrantes)" = "quadrants",
+                                          "8. Boxplot Territorial" = "boxplot")), hr(),
+                  
+                  # --- CONTROLES PARA BOXPLOT ---
+                  conditionalPanel(condition = "input.viz_mode == 'boxplot'", hr(), h6("Configuración Boxplot"),
+                                   selectInput("boxplot_y", "Variable Numérica (Y):", choices = c("Cantidad de Medidas" = "medidas")),
+                                   selectInput("boxplot_x", "Agrupar por (X):", choices = c("Zona Territorial" = "zona")),
+                                   checkboxInput("boxplot_points", "Mostrar cada comuna (puntos superpuestos)", value = TRUE)),
                   
                   conditionalPanel(condition = "input.viz_mode == 'nlp'",
                                    radioButtons("nlp_type", "Tipo de Nube:", choices = c("1. Frecuencia Global" = "global", "2. Exclusividad (Keyness)" = "unique")),
@@ -342,6 +566,11 @@ ui <- page_sidebar(
                                    selectizeInput("network_search_actor", "🔍 Buscar/Filtrar por Actor:", choices = NULL, options = list(placeholder = 'Escriba un actor...')),
                                    numericInput("top_actors_n", "Cantidad Máxima de Actores (Top):", value = 15, min = 1),
                                    checkboxInput("shared_actors_only", "Mostrar SOLO actores compartidos (>1 Plan)", value = FALSE)),
+                  
+                  conditionalPanel(condition = "input.viz_mode == 'quadrants'", hr(), h6("Configuración Cuadrantes"),
+                                   checkboxInput("quadrant_show_unclassified", "Mostrar actores no clasificados (al centro)", value = FALSE),
+                                   checkboxInput("quadrant_show_labels", "Mostrar nombres de actores", value = TRUE),
+                                   numericInput("quadrant_min_freq", "Frecuencia mínima para mostrar:", value = 1, min = 1)),
                   
                   conditionalPanel(condition = "input.viz_mode == 'corrmatrix'", hr(), h6("Configuración de Correlaciones"),
                                    selectizeInput("corr_cols", "Variables a cruzar:", choices = NULL, multiple = TRUE),
@@ -400,6 +629,14 @@ ui <- page_sidebar(
                                    visNetworkOutput("network_plot", height = "650px")
                                  )))),
                 
+                conditionalPanel(condition = "input.viz_mode == 'quadrants'", fluidRow(column(12, card(
+                  card_header(
+                    div(style="display: flex; justify-content: space-between; align-items: center;",
+                        span("Mapeo de Actores por Sector (Cuadrantes)"), downloadButton("dl_quadrant", "Descargar PNG", class="btn-sm btn-outline-primary")
+                    )),
+                  plotlyOutput("quadrant_plot", height = "700px")
+                )))),
+                
                 conditionalPanel(condition = "input.viz_mode == 'corrmatrix'", fluidRow(column(12, card(
                   card_header(
                     div(style="display: flex; justify-content: space-between; align-items: center;",
@@ -416,7 +653,48 @@ ui <- page_sidebar(
                         downloadButton("dl_map", "Descargar PNG", class="btn-sm btn-outline-primary")
                     )),
                   card_body(leafletOutput("map_plot", height = "650px"))
+                )))),
+                
+                conditionalPanel(condition = "input.viz_mode == 'boxplot'", fluidRow(column(12, card(
+                  card_header(
+                    div(style="display: flex; justify-content: space-between; align-items: center;",
+                        span("Distribución Territorial (Boxplot por Zona)"), 
+                        downloadButton("dl_boxplot", "Descargar PNG", class="btn-sm btn-outline-primary")
+                    )),
+                  card_body(plotlyOutput("boxplot_plot", height = "650px"))
                 ))))
+              )
+    ),
+    
+    # CAPA 4 (METODOLOGÍA Y CITAS DE PAQUETES)
+    nav_panel("Capa 4: Metodología y Citas", icon = icon("book"), br(),
+              fluidRow(
+                column(12, card(
+                  card_header(
+                    class = "bg-primary text-white",
+                    div(style = "display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap;",
+                        span(icon("clipboard-list"), " 1. Tabla de Metodologías y Paquetes Utilizados"),
+                        div(style = "display: flex; gap: 8px;",
+                            downloadButton("dl_metodologia_excel", "Descargar Excel (Metodología + Citas)", class = "btn-sm btn-light text-dark"),
+                            downloadButton("dl_referencias_bib", "Descargar BibTeX (.bib)", class = "btn-sm btn-warning text-dark")
+                        )
+                    )
+                  ),
+                  card_body(
+                    p(style = "font-size: 0.9em; color: #555;",
+                      "Las citas de paquetes se obtienen automáticamente desde los metadatos oficiales instalados en tu sesión de R mediante citation()."),
+                    DTOutput("metodologia_table")
+                  )
+                ))
+              ),
+              br(),
+              fluidRow(
+                column(12, card(
+                  card_header(class = "bg-dark text-white", icon("quote-right"), " 2. Referencias Bibliográficas Completas (R y Paquetes)"),
+                  card_body(
+                    DTOutput("referencias_paquetes_table")
+                  )
+                ))
               )
     )
   )
@@ -448,6 +726,8 @@ server <- function(input, output, session) {
   current_choices <- reactiveVal(data.frame(Choice=character(), Acronimo=character(), stringsAsFactors=FALSE))
   questions_set <- reactiveVal(data.frame(Pregunta=character(), Tipo=character(), Opciones_Acronimos=character(), stringsAsFactors=FALSE))
   choices_list_master <- reactiveVal(list())
+  
+  actor_class_data <- reactiveVal(data.frame(Actor=character(), Sectores=character(), stringsAsFactors=FALSE))
   
   output$project_is_active <- reactive({ !is.null(active_project()) })
   outputOptions(output, "project_is_active", suspendWhenHidden = FALSE)
@@ -523,7 +803,6 @@ server <- function(input, output, session) {
       )
     }
     
-    # 2. CONFIGURACIÓN EXPLÍCITA DE MENÚS DESPLEGABLES (LISTAS) PARA DATATABLES
     if (nrow(dict) > 0) {
       list_rows <- which(dict$Tipo == "Lista" & dict$Columna %in% names(df))
       if (length(list_rows) > 0) {
@@ -678,6 +957,8 @@ server <- function(input, output, session) {
     dict_new <- data.frame(Columna="Plan", Tipo="Texto", Opciones="", stringsAsFactors=FALSE)
     write_excel_csv2(dict_new, file.path(proj_dir, "config", "diccionario_info_general.csv"), na = "")
     
+    write_excel_csv2(data.frame(Actor=character(), Sectores=character()), file.path(proj_dir, "config", "clasificacion_actores.csv"), na = "")
+    
     actualizar_lista_proyectos()
     updateSelectInput(session, "existing_proj", selected = basename(proj_dir))
     showNotification("Proyecto creado. Sincronizando...", type="message")
@@ -695,6 +976,13 @@ server <- function(input, output, session) {
     
     info_file <- file.path(proj_dir, "info_general.csv")
     dict_info_file <- file.path(proj_dir, "config", "diccionario_info_general.csv")
+    class_actores_file <- file.path(proj_dir, "config", "clasificacion_actores.csv")
+    
+    if (file.exists(class_actores_file)) {
+      actor_class_data(leer_csv_robusto(class_actores_file))
+    } else {
+      actor_class_data(data.frame(Actor=character(), Sectores=character(), stringsAsFactors=FALSE))
+    }
     
     dict <- data.frame(Columna=character(), Tipo=character(), Opciones=character(), stringsAsFactors=FALSE)
     if(file.exists(dict_info_file)) { dict <- leer_csv_robusto(dict_info_file) }
@@ -779,9 +1067,10 @@ server <- function(input, output, session) {
     
     if("Plan" %in% names(df_final)) { updateSelectizeInput(session, "plan_filter", choices = unique(na.omit(df_final$Plan))) }
     todas_columnas <- names(df_final)
-    updateSelectInput(session, "freq_col", choices = todas_columnas, selected = if("Eje" %in% todas_columnas) "Eje" else todas_columnas[1])
-    updateSelectInput(session, "sankey_source", choices = todas_columnas, selected = if("Eje" %in% todas_columnas) "Eje" else todas_columnas[1])
-    updateSelectInput(session, "sankey_target", choices = todas_columnas, selected = if("Área" %in% todas_columnas) "Área" else todas_columnas[2])
+    
+    updateSelectInput(session, "freq_col", choices = todas_columnas, selected = ifelse("Eje" %in% todas_columnas, "Eje", todas_columnas[1]))
+    updateSelectInput(session, "sankey_source", choices = todas_columnas, selected = ifelse("Eje" %in% todas_columnas, "Eje", todas_columnas[1]))
+    updateSelectInput(session, "sankey_target", choices = todas_columnas, selected = ifelse("Área" %in% todas_columnas, "Área", todas_columnas[2]))
     
     cols_clasificadoras <- intersect(c("Eje", "Área", "Tipo de medida", "Colaboradores externos"), todas_columnas)
     if(length(cols_clasificadoras) == 0) cols_clasificadoras <- setdiff(todas_columnas, c("ID", "status"))[1:min(3, length(todas_columnas))]
@@ -885,6 +1174,172 @@ server <- function(input, output, session) {
   })
   output$questions_set_tbl <- renderDT({ datatable(questions_set(), options = list(pageLength = 10), rownames = FALSE) })
   
+  # ==========================================================================
+  # LÓGICA DE LIMPIEZA DE ACTORES (CAPA 1.8)
+  # ==========================================================================
+  
+  observeEvent(curated_data(), {
+    df <- curated_data()
+    req(df)
+    cols <- names(df)
+    updateSelectInput(session, "actor_col_clean", 
+                      choices = cols, 
+                      selected = ifelse("Colaboradores externos" %in% cols, "Colaboradores externos", cols[1]))
+  })
+  
+  actores_freq_reac <- reactive({
+    df <- curated_data()
+    col <- input$actor_col_clean
+    req(df, col, col %in% names(df))
+    
+    df %>%
+      filter(tolower(trimws(status)) %in% c("revisado", "con observaciones", "consolidado")) %>%
+      select(val = all_of(col)) %>%
+      tidyr::drop_na() %>%
+      tidyr::separate_rows(val, sep = ";\\s*") %>%
+      mutate(val = trimws(val)) %>%
+      filter(val != "") %>%
+      count(val, name = "Frecuencia", sort = TRUE) %>%
+      rename(Actor = val)
+  })
+  
+  output$actors_freq_table <- renderDT({
+    datatable(actores_freq_reac(), 
+              selection = 'single', 
+              options = list(pageLength = 15, stateSave = TRUE), 
+              rownames = FALSE)
+  })
+  
+  observeEvent(actores_freq_reac(), {
+    freqs <- actores_freq_reac()
+    req(freqs)
+    sel_actual <- isolate(input$actor_to_replace)
+    updateSelectizeInput(session, "actor_to_replace", choices = freqs$Actor, selected = sel_actual, server = TRUE)
+  })
+  
+  observeEvent(input$actors_freq_table_rows_selected, {
+    fila <- input$actors_freq_table_rows_selected
+    freqs <- actores_freq_reac()
+    req(length(fila) > 0, freqs)
+    
+    actor_sel <- freqs$Actor[fila]
+    updateSelectizeInput(session, "actor_to_replace", selected = actor_sel)
+    updateTextInput(session, "actor_replacement", value = actor_sel)
+  })
+  
+  observeEvent(input$apply_clean_actor_btn, {
+    df <- curated_data()
+    col <- input$actor_col_clean
+    actores_malos <- input$actor_to_replace
+    actor_bueno <- trimws(input$actor_replacement)
+    
+    req(active_project(), df, col, length(actores_malos) > 0, actor_bueno != "")
+    
+    limpiar_celda <- function(celda) {
+      if(is.na(celda) || trimws(celda) == "") return(NA_character_)
+      elementos <- strsplit(as.character(celda), ";\\s*")[[1]]
+      elementos <- trimws(elementos)
+      elementos[elementos %in% actores_malos] <- actor_bueno
+      elementos <- unlist(strsplit(elementos, ";\\s*"))
+      elementos <- trimws(elementos)
+      elementos <- unique(elementos[elementos != ""])
+      if(length(elementos) == 0) return(NA_character_)
+      paste(elementos, collapse = "; ")
+    }
+    
+    df[[col]] <- as.character(unname(sapply(df[[col]], limpiar_celda)))
+    curated_data(df)
+    
+    rev_name <- gsub(" ", "_", input$reviewer_name)
+    file_path <- file.path(workspace, active_project(), paste0("dataset_curado_", rev_name, ".csv"))
+    write_excel_csv2(df, file_path, na = "")
+    
+    showNotification(paste("Corregido y guardado en archivo automáticamente:", actor_bueno), type = "message")
+  })
+  
+  # ==========================================================================
+  # LÓGICA CLASIFICACIÓN DE ACTORES (CAPA 1.9)
+  # ==========================================================================
+  
+  observeEvent(actores_freq_reac(), {
+    actores_totales <- actores_freq_reac()$Actor
+    updateSelectizeInput(session, "actor_to_classify", choices = actores_totales, server = TRUE)
+  })
+  
+  actores_pendientes_reac <- reactive({
+    totales <- actores_freq_reac()$Actor
+    clasificados <- actor_class_data()$Actor
+    pendientes <- setdiff(totales, clasificados)
+    data.frame(Actor = pendientes, stringsAsFactors = FALSE)
+  })
+  
+  output$actors_unclass_table <- renderDT({
+    datatable(actores_pendientes_reac(), selection = 'multiple', options = list(pageLength = 10, stateSave = TRUE), rownames = FALSE)
+  })
+  
+  observeEvent(input$actors_unclass_table_rows_selected, {
+    fila <- input$actors_unclass_table_rows_selected
+    req(length(fila) > 0)
+    pendientes_sel <- actores_pendientes_reac()$Actor[fila]
+    sel_actual <- isolate(input$actor_to_classify)
+    updateSelectizeInput(session, "actor_to_classify", selected = unique(c(sel_actual, pendientes_sel)))
+  })
+  
+  output$actors_class_table <- renderDT({
+    datatable(actor_class_data(), selection = 'multiple', options = list(pageLength = 10, stateSave = TRUE), rownames = FALSE)
+  })
+  
+  observeEvent(input$actors_class_table_rows_selected, {
+    fila <- input$actors_class_table_rows_selected
+    df_class <- actor_class_data()
+    req(length(fila) > 0, df_class)
+    
+    act_sel <- df_class$Actor[fila]
+    sect <- strsplit(df_class$Sectores[fila[1]], ";\\s*")[[1]]
+    
+    sel_actual <- isolate(input$actor_to_classify)
+    updateSelectizeInput(session, "actor_to_classify", selected = unique(c(sel_actual, act_sel)))
+    updateSelectizeInput(session, "actor_sectors", selected = sect)
+  })
+  
+  observeEvent(input$save_actor_class_btn, {
+    actores <- input$actor_to_classify
+    sect <- input$actor_sectors
+    req(active_project(), length(actores) > 0, length(sect) > 0)
+    
+    df_class <- actor_class_data()
+    sect_str <- paste(sect, collapse = "; ")
+    
+    for (act in actores) {
+      if (act %in% df_class$Actor) {
+        df_class$Sectores[df_class$Actor == act] <- sect_str
+      } else {
+        df_class <- rbind(df_class, data.frame(Actor = as.character(act), Sectores = as.character(sect_str), stringsAsFactors = FALSE))
+      }
+    }
+    
+    actor_class_data(df_class)
+    write_excel_csv2(df_class, file.path(workspace, active_project(), "config", "clasificacion_actores.csv"), na = "")
+    showNotification(paste("Se clasificaron", length(actores), "actor(es) exitosamente."), type = "message")
+    
+    updateSelectizeInput(session, "actor_to_classify", selected = character(0))
+    updateSelectizeInput(session, "actor_sectors", selected = character(0))
+  })
+  
+  observeEvent(input$clear_actor_class_btn, {
+    actores <- input$actor_to_classify
+    req(active_project(), length(actores) > 0)
+    
+    df_class <- actor_class_data()
+    df_class <- df_class %>% filter(!Actor %in% actores)
+    actor_class_data(df_class)
+    
+    write_excel_csv2(df_class, file.path(workspace, active_project(), "config", "clasificacion_actores.csv"), na = "")
+    showNotification(paste("Clasificación eliminada para", length(actores), "actor(es)."), type = "warning")
+    updateSelectizeInput(session, "actor_to_classify", selected = character(0))
+    updateSelectizeInput(session, "actor_sectors", selected = character(0))
+  })
+  
   # === CAPA 2: EVALUACIÓN ===
   output$results_table <- renderDT({ req(curated_data()); datatable(curated_data(), options = list(pageLength = 10, scrollX = TRUE), rownames = FALSE) })
   
@@ -967,7 +1422,9 @@ server <- function(input, output, session) {
       column(7, h6("✏️ Campos de Texto Editables", class="text-secondary"), tagList(ui_text)),
       column(5, h6("📌 Clasificadores", class="text-secondary"), tagList(ui_select), hr(),
              div(style="margin-bottom: 15px;", tags$label("Estado de Revisión Final:", class="control-label", style="font-weight: bold; color: #d35400;"),
-                 selectInput(paste0("cur_status_", idx), label=NULL, choices = c("Pendiente", "Revisado", "Con Observaciones"), selected = row_data$status, width="100%"))
+                 selectInput(paste0("cur_status_", idx), label=NULL, 
+                             choices = c("Pendiente", "Revisado", "Con Observaciones", "Excluido"), 
+                             selected = row_data$status, width="100%"))
       )
     )
     
@@ -1019,7 +1476,9 @@ server <- function(input, output, session) {
   observeEvent(input$run_consensus_btn, {
     req(input$consensus_files)
     df_list <- lapply(input$consensus_files$datapath, function(p) { leer_csv_robusto(p) })
+    
     df_all <- bind_rows(df_list)
+    
     base_cols <- names(raw_data())
     dyn_cols <- setdiff(names(df_all), c(base_cols, "status"))
     master_df <- df_all %>% group_by(ID) %>% summarise(across(any_of(base_cols), ~ first(na.omit(.))), status = "Consolidado", across(any_of(dyn_cols), ~ resolve_metadata(., rule = input$meta_rule)), .groups = "drop")
@@ -1033,21 +1492,36 @@ server <- function(input, output, session) {
   viz_data <- reactive({
     req(curated_data())
     df <- curated_data()
-    if (!is.null(input$plan_filter) && length(input$plan_filter) > 0 && "Plan" %in% names(df)) df <- df %>% filter(Plan %in% input$plan_filter)
+    
+    if ("status" %in% names(df)) {
+      df <- df %>% filter(tolower(trimws(status)) != "excluido")
+    }
+    
+    if (!is.null(input$plan_filter) && length(input$plan_filter) > 0 && "Plan" %in% names(df)) {
+      df <- df %>% filter(Plan %in% input$plan_filter)
+    }
     return(df)
   })
   
-  # === ACTUALIZAR OPCIONES MAPA SEGUN CAPA 0 ===
   observe({
     req(info_gral_data())
     df_info <- info_gral_data()
     cols <- setdiff(names(df_info), "Plan")
-    opciones <- c("Cantidad de Medidas" = "medidas")
-    if (length(cols) > 0) { opciones <- c(opciones, cols) }
     
-    sel <- input$map_var
-    if (is.null(sel) || !(sel %in% opciones)) sel <- "medidas"
-    updateSelectInput(session, "map_var", choices = opciones, selected = sel)
+    opciones <- list("Cantidad de Medidas" = "medidas")
+    if (length(cols) > 0) { 
+      extra_ops <- setNames(as.list(cols), cols)
+      opciones <- c(opciones, extra_ops) 
+    }
+    valores_opciones <- unlist(opciones)
+    
+    sel_map <- isolate(input$map_var)
+    if (is.null(sel_map) || !(sel_map %in% valores_opciones)) sel_map <- "medidas"
+    updateSelectInput(session, "map_var", choices = opciones, selected = sel_map)
+    
+    sel_box <- isolate(input$boxplot_y)
+    if (is.null(sel_box) || !(sel_box %in% valores_opciones)) sel_box <- "medidas"
+    updateSelectInput(session, "boxplot_y", choices = opciones, selected = sel_box)
   })
   
   observeEvent(input$map_var, {
@@ -1084,14 +1558,40 @@ server <- function(input, output, session) {
     return(tokens)
   }
   
-  generar_tokens <- function(df, text_col, group_col, stopwords_str, verb_filter, ngram_type) {
+  obtener_cols_texto_nlp <- function(df) {
+    nombres_low <- tolower(trimws(names(df)))
+    
+    # Priorizar coincidencia exacta "Medida" y evitar "Tipo de medida"
+    idx_med <- which(nombres_low == "medida")
+    if (length(idx_med) == 0) {
+      idx_med <- setdiff(grep("medida", nombres_low), grep("tipo", nombres_low))
+    }
+    
+    idx_desc <- grep("descripci", nombres_low)
+    
+    cols <- c()
+    if (length(idx_med) > 0) cols <- c(cols, names(df)[idx_med[1]])
+    if (length(idx_desc) > 0) cols <- c(cols, names(df)[idx_desc[1]])
+    unique(cols)
+  }
+  
+  generar_tokens <- function(df, text_cols, group_col, stopwords_str, verb_filter, ngram_type) {
     user_stops <- stopwords_str %>% str_split(",") %>% unlist() %>% str_trim() %>% tolower()
     custom_stops <- data.frame(word = unique(user_stops))
     
+    text_cols <- setdiff(text_cols, group_col)
+    if (length(text_cols) == 0) return(tibble(Grupo = character(), word = character()))
+    
+    # Se apilan Medida y Descripción bajo el mismo Grupo para extraer unigramas y bigramas
+    # de ambas columnas sin generar bigramas espurios entre el fin de Medida y el inicio de Descripción
     df_clean <- df %>% 
-      select(all_of(c(group_col, text_col))) %>% 
-      rename(Grupo = !!sym(group_col), Texto = !!sym(text_col)) %>% 
-      filter(!is.na(Grupo) & Grupo != "")
+      select(all_of(unique(c(group_col, text_cols)))) %>% 
+      rename(Grupo = !!sym(group_col)) %>% 
+      filter(!is.na(Grupo) & trimws(as.character(Grupo)) != "") %>% 
+      mutate(across(all_of(text_cols), as.character)) %>% 
+      tidyr::pivot_longer(cols = all_of(text_cols), names_to = "Origen_Texto", values_to = "Texto") %>% 
+      filter(!is.na(Texto) & trimws(Texto) != "") %>% 
+      select(Grupo, Texto)
     
     res <- tibble(Grupo = character(), word = character())
     
@@ -1109,6 +1609,7 @@ server <- function(input, output, session) {
       t2 <- df_clean %>% 
         unnest_tokens(word, Texto, token = "ngrams", n = 2) %>% 
         filter(!is.na(word)) %>% 
+        filter(!word %in% c("cambio climático", "cambio climatico")) %>%
         tidyr::separate(word, c("w1", "w2"), sep = " ", remove = FALSE) %>% 
         filter(!w1 %in% custom_stops$word, !w2 %in% custom_stops$word) %>% 
         filter(nchar(w1) > 2, nchar(w2) > 2) %>% 
@@ -1127,12 +1628,14 @@ server <- function(input, output, session) {
   }
   
   wc_global_data_reac <- reactive({
-    df <- viz_data(); idx_desc <- grep("descripci", tolower(names(df)))
-    if(length(idx_desc) == 0) return(NULL)
-    nombre_col_real <- names(df)[idx_desc[1]]; group_col <- if("Plan" %in% names(df)) "Plan" else "ID" 
+    df <- viz_data()
+    cols_texto <- obtener_cols_texto_nlp(df)
+    if (length(cols_texto) == 0) return(NULL)
     
-    tokens <- generar_tokens(df, nombre_col_real, group_col, input$custom_stopwords, input$verb_filter, input$ngram_mode)
-    if(nrow(tokens) == 0) return(NULL)
+    group_col <- if ("Plan" %in% names(df)) "Plan" else "ID"
+    
+    tokens <- generar_tokens(df, cols_texto, group_col, input$custom_stopwords, input$verb_filter, input$ngram_mode)
+    if (nrow(tokens) == 0) return(NULL)
     
     total_grupos <- n_distinct(tokens$Grupo)
     word_metrics <- tokens %>% group_by(word) %>% summarise(frecuencia_absoluta = n(), grupos_distintos = n_distinct(Grupo)) 
@@ -1147,41 +1650,104 @@ server <- function(input, output, session) {
     freqs$freq <- round(freqs$freq, 1); as.data.frame(freqs)
   })
   
-  wc_unique_data_reac <- reactive({
-    df_global <- curated_data(); req(input$unique_group_col, input$unique_group_val)
-    idx_desc <- grep("descripci", tolower(names(df_global)))
-    if(length(idx_desc) == 0 || !input$unique_group_col %in% names(df_global)) return(NULL)
+  # Poblar dinámicamente "Mostrar exclusivas de:" según la columna elegida para Keyness
+  observeEvent(list(viz_data(), input$unique_group_col), {
+    df <- viz_data()
+    col <- input$unique_group_col
+    req(df, col, col %in% names(df))
     
-    nombre_col_real <- names(df_global)[idx_desc[1]]
-    tokens_grouped <- generar_tokens(df_global, nombre_col_real, input$unique_group_col, input$custom_stopwords, input$verb_filter, input$ngram_mode)
-    if(nrow(tokens_grouped) == 0) return(NULL)
+    vals <- df %>%
+      select(val = all_of(col)) %>%
+      mutate(val = as.character(val)) %>%
+      filter(!is.na(val) & trimws(val) != "") %>%
+      tidyr::separate_rows(val, sep = ";\\s*") %>%
+      mutate(val = trimws(val)) %>%
+      filter(val != "") %>%
+      pull(val) %>%
+      unique() %>%
+      sort()
+    
+    if (length(vals) == 0) {
+      updateSelectInput(session, "unique_group_val", choices = character(0))
+      return()
+    }
+    
+    sel_actual <- isolate(input$unique_group_val)
+    sel_nueva <- if (!is.null(sel_actual) && sel_actual %in% vals) sel_actual else vals[1]
+    
+    updateSelectInput(session, "unique_group_val", choices = vals, selected = sel_nueva)
+  })
+  
+  wc_unique_data_reac <- reactive({
+    df_global <- viz_data()
+    req(df_global, input$unique_group_col, input$unique_group_val)
+    
+    cols_texto <- obtener_cols_texto_nlp(df_global)
+    if (length(cols_texto) == 0 || !input$unique_group_col %in% names(df_global)) return(NULL)
+    
+    df_prep <- df_global %>%
+      select(all_of(unique(c(input$unique_group_col, cols_texto)))) %>%
+      mutate(!!sym(input$unique_group_col) := as.character(!!sym(input$unique_group_col))) %>%
+      tidyr::separate_rows(!!sym(input$unique_group_col), sep = ";\\s*") %>%
+      mutate(!!sym(input$unique_group_col) := trimws(!!sym(input$unique_group_col))) %>%
+      filter(!is.na(!!sym(input$unique_group_col)) & !!sym(input$unique_group_col) != "")
+    
+    tokens_grouped <- generar_tokens(df_prep, cols_texto, input$unique_group_col,
+                                     input$custom_stopwords, input$verb_filter, input$ngram_mode)
+    if (nrow(tokens_grouped) == 0) return(NULL)
     
     word_counts <- tokens_grouped %>% count(Grupo, word)
-    if(nrow(word_counts) == 0) return(NULL)
+    if (nrow(word_counts) == 0) return(NULL)
     
     mi_dfm <- word_counts %>% cast_dfm(document = Grupo, term = word, value = n)
-    stat_keyness <- tryCatch({ textstat_keyness(mi_dfm, target = as.character(input$unique_group_val)) }, error = function(e) { return(NULL) })
-    if(is.null(stat_keyness) || nrow(stat_keyness) == 0) return(NULL)
+    target_val <- trimws(as.character(input$unique_group_val))
     
-    freqs <- stat_keyness %>% filter(chi2 > 0 & p < 0.05) %>% arrange(desc(chi2)) %>% select(word = feature, freq = chi2, p_value = p) %>% mutate(freq = round(freq, 1))
+    if (ndoc(mi_dfm) < 2 || !(target_val %in% docnames(mi_dfm))) return(NULL)
+    
+    stat_keyness <- tryCatch({
+      textstat_keyness(mi_dfm, target = target_val)
+    }, error = function(e) { NULL })
+    
+    if (is.null(stat_keyness) || nrow(stat_keyness) == 0) return(NULL)
+    
+    freqs <- stat_keyness %>%
+      filter(chi2 > 0 & p < 0.05) %>%
+      arrange(desc(chi2)) %>%
+      select(word = feature, freq = chi2, p_value = p) %>%
+      mutate(freq = round(freq, 1))
+    
+    if (nrow(freqs) == 0) return(NULL)
     as.data.frame(freqs)
   })
   
   output$nlp_title_ui <- renderText({
-    if(is.null(input$nlp_type) || input$nlp_type == "global") { "Nube de Palabras: Frecuencia Global" }
-    else { paste("Nube de Palabras (Keyness Chi-Cuadrado):", input$unique_group_val) }
+    if(is.null(input$nlp_type) || input$nlp_type == "global") { "Nube de Palabras: Frecuencia Global (Medida + Descripción)" }
+    else { paste("Nube de Palabras (Keyness Chi-Cuadrado - Medida + Descripción):", input$unique_group_val) }
   })
   
   output$nlp_wordcloud_ui <- renderWordcloud2({
-    if(!is.null(input$nlp_type) && input$nlp_type == "unique") {
-      freqs <- wc_unique_data_reac(); req(freqs)
-      wordcloud2(head(freqs[, c("word", "freq")], 80), size = 0.6, color = "random-light", backgroundColor = "#2c3e50")
+    if (!is.null(input$nlp_type) && input$nlp_type == "unique") {
+      freqs <- wc_unique_data_reac()
+      validate(
+        need(!is.null(freqs) && nrow(freqs) > 0,
+             "No se encontraron palabras significativas (p < 0.05) para este grupo. Asegúrate de tener al menos 2 grupos activos (por ejemplo, no filtrar a un solo Plan si agrupas por Plan) o cambia el filtro de n-gramas/verbos.")
+      )
+      wordcloud2(head(freqs[, c("word", "freq")], 80),
+                 size = 0.7 + (font_plus * 0.05),
+                 color = "random-light", backgroundColor = "#2c3e50")
     } else {
-      freqs <- wc_global_data_reac(); req(freqs)
-      wordcloud2(head(freqs[, c("word", "freq")], 100), size = 0.6)
+      freqs <- wc_global_data_reac()
+      validate(need(!is.null(freqs) && nrow(freqs) > 0, "No hay suficientes palabras para generar la nube."))
+      wordcloud2(head(freqs[, c("word", "freq")], 100),
+                 size = 0.7 + (font_plus * 0.05))
     }
   })
   
+  # ====================================================================
+  # REACTIVOS DE GRÁFICOS (Para visualización y descarga)
+  # ====================================================================
+  
+  # 1. Sankey
   sankey_data_reac <- reactive({
     df <- viz_data()
     v_orig <- input$sankey_source
@@ -1200,7 +1766,7 @@ server <- function(input, output, session) {
     sankey_df %>% count(Origen = !!sym(v_orig), Destino = !!sym(v_dest), name = "value")
   })
   
-  output$sankey_plot <- renderPlotly({
+  sankey_obj <- reactive({
     sankey_df <- sankey_data_reac()
     req(sankey_df, nrow(sankey_df) > 0)
     
@@ -1245,11 +1811,15 @@ server <- function(input, output, session) {
     }
     
     plot_ly(type = "sankey", orientation = "h", 
+            textfont = list(size = 13 + font_plus),
             node = list(label = clean_nodes, pad = 15, thickness = 20, line = list(color = "black", width = 0.5)), 
             link = list(source = sankey_df$source, target = sankey_df$target, value = sankey_df$value)) %>% 
+      layout(font = list(size = 13 + font_plus)) %>% 
       config(displayModeBar = FALSE)
   })
+  output$sankey_plot <- renderPlotly({ req(sankey_obj()) })
   
+  # 2. Frecuencias
   freq_data_reac <- reactive({
     df <- viz_data()
     req(input$freq_col %in% names(df))
@@ -1273,7 +1843,7 @@ server <- function(input, output, session) {
     freq_df %>% count(Categoria, wt = peso_fila, name = "Conteo") %>% arrange(desc(Conteo))
   })
   
-  output$freq_plot <- renderPlotly({
+  freq_obj <- reactive({
     freq_df <- freq_data_reac()
     req(freq_df)
     freq_df <- head(freq_df, 20)
@@ -1285,10 +1855,12 @@ server <- function(input, output, session) {
     
     plot_ly(freq_df, x = ~Conteo, y = ~Categoria_Corta, type = 'bar', orientation = 'h', 
             text = ~round(Conteo, 2), textposition = 'auto', marker = list(color = '#3498db')) %>% 
-      layout(xaxis = list(title = "Cantidad de Medidas"), yaxis = list(title = input$freq_col), margin = list(l = 150)) %>% 
+      layout(font = list(size = 13 + font_plus), xaxis = list(title = "Cantidad de Medidas", titlefont = list(size=13 + font_plus), tickfont = list(size=13 + font_plus)), yaxis = list(title = input$freq_col, titlefont = list(size=13 + font_plus), tickfont = list(size=13 + font_plus)), margin = list(l = 150)) %>% 
       config(displayModeBar = FALSE)
   })
+  output$freq_plot <- renderPlotly({ req(freq_obj()) })
   
+  # KPI de Red
   network_kpi_data <- reactive({
     df <- viz_data()
     actor_col <- "Colaboradores externos"
@@ -1346,6 +1918,7 @@ server <- function(input, output, session) {
     )
   })
   
+  # 3. Red Network
   network_data_reac <- reactive({
     df <- viz_data()
     actor_col <- "Colaboradores externos"
@@ -1382,20 +1955,18 @@ server <- function(input, output, session) {
     net_df %>% filter(!!sym(actor_col) %in% top_actors)
   })
   
-  output$network_plot <- renderVisNetwork({
+  network_obj <- reactive({
     net_df <- network_data_reac()
     req(net_df)
     actor_col <- "Colaboradores externos"
     
     search_actor <- input$network_search_actor
-    if (is.null(search_actor)) {
-      search_actor <- ""
-    }
+    if (is.null(search_actor)) search_actor <- ""
     
     actores_frecuencias <- net_df %>% group_by(!!sym(actor_col)) %>% summarise(n_planes = n_distinct(Plan))
     actores_comunes <- actores_frecuencias %>% filter(n_planes > 1) %>% pull(!!sym(actor_col))
     
-    planes_nodos <- data.frame(id = unique(net_df$Plan), label = unique(net_df$Plan), group = "Plan", font.size = 20, stringsAsFactors = FALSE)
+    planes_nodos <- data.frame(id = unique(net_df$Plan), label = unique(net_df$Plan), group = "Plan", font.size = 20 + font_plus, stringsAsFactors = FALSE)
     actores_ids <- unique(net_df[[actor_col]])
     
     actores_nodos <- data.frame(id = actores_ids, label = actores_ids, stringsAsFactors = FALSE) %>% 
@@ -1406,15 +1977,14 @@ server <- function(input, output, session) {
           id %in% actores_comunes ~ "Actor_Comun",
           TRUE ~ "Actor"
         ),
-        font.size = ifelse(es_buscado, 28, 14)
+        font.size = ifelse(es_buscado, 28 + font_plus, 14 + font_plus)
       ) %>%
       select(-es_buscado)
     
     nodes <- bind_rows(planes_nodos, actores_nodos)
-    
     edges <- data.frame(from = net_df$Plan, to = net_df[[actor_col]], value = net_df$peso, stringsAsFactors = FALSE) 
     
-    g <- visNetwork(nodes, edges, width = "100%") %>% 
+    visNetwork(nodes, edges, width = "100%") %>% 
       visGroups(groupname = "Plan", shape = "square", color = "#e74c3c") %>% 
       visGroups(groupname = "Actor", shape = "dot", color = "#2ecc71") %>% 
       visGroups(groupname = "Actor_Comun", shape = "dot", color = "#3498db") %>% 
@@ -1424,9 +1994,120 @@ server <- function(input, output, session) {
       visPhysics(solver = "forceAtlas2Based", 
                  forceAtlas2Based = list(gravitationalConstant = -80, centralGravity = 0.01, springLength = 150), 
                  stabilization = list(enabled = TRUE, iterations = 300))
-    g
+  })
+  output$network_plot <- renderVisNetwork({ req(network_obj()) })
+  
+  # 4. Cuadrantes
+  quadrant_data_reac <- reactive({
+    df <- viz_data()
+    actor_col <- "Colaboradores externos"
+    req(actor_col %in% names(df))
+    
+    df_class <- actor_class_data()
+    req(df_class)
+    
+    actores_activos <- df %>% 
+      select(val = all_of(actor_col)) %>% 
+      tidyr::drop_na() %>% 
+      tidyr::separate_rows(val, sep = ";\\s*") %>% 
+      mutate(val = trimws(val)) %>% 
+      filter(val != "") %>% 
+      count(val, name = "Freq") %>% 
+      rename(Actor = val)
+    
+    if (nrow(actores_activos) == 0) return(NULL)
+    
+    q_df <- left_join(actores_activos, df_class, by = "Actor")
+    
+    min_freq <- if(is.numeric(input$quadrant_min_freq)) input$quadrant_min_freq else 1
+    q_df <- q_df %>% filter(Freq >= min_freq)
+    
+    if (is.null(input$quadrant_show_unclassified) || !input$quadrant_show_unclassified) {
+      q_df <- q_df %>% filter(!is.na(Sectores) & Sectores != "")
+    }
+    
+    if (nrow(q_df) == 0) return(NULL)
+    
+    calc_coords <- function(sec_str) {
+      if(is.na(sec_str) || sec_str == "") return(c(0, 0)) 
+      secs <- unlist(strsplit(sec_str, ";\\s*"))
+      x_vals <- c(); y_vals <- c()
+      for(s in secs) {
+        if(s == "Sociedad Civil") { x_vals <- c(x_vals, -1); y_vals <- c(y_vals, 1) }
+        else if(s == "Sector Público") { x_vals <- c(x_vals, 1); y_vals <- c(y_vals, 1) }
+        else if(s == "Academia") { x_vals <- c(x_vals, -1); y_vals <- c(y_vals, -1) }
+        else if(s == "Sector Privado") { x_vals <- c(x_vals, 1); y_vals <- c(y_vals, -1) }
+      }
+      if(length(x_vals) == 0) return(c(0, 0))
+      return(c(mean(x_vals), mean(y_vals)))
+    }
+    
+    jitter_coord <- function(val) {
+      if(val == 0) return(runif(1, -0.02, 0.02)) 
+      return(val + runif(1, -0.7, 0.7))        
+    }
+    
+    coords_list <- lapply(q_df$Sectores, calc_coords)
+    q_df$X <- sapply(coords_list, `[`, 1)
+    q_df$Y <- sapply(coords_list, `[`, 2)
+    
+    set.seed(42)
+    q_df$X_jitter <- sapply(q_df$X, jitter_coord)
+    q_df$Y_jitter <- sapply(q_df$Y, jitter_coord)
+    
+    counts <- c(
+      "Academia" = sum(grepl("Academia", q_df$Sectores)),
+      "Sector Público" = sum(grepl("Sector Público", q_df$Sectores)),
+      "Sociedad Civil" = sum(grepl("Sociedad Civil", q_df$Sectores)),
+      "Sector Privado" = sum(grepl("Sector Privado", q_df$Sectores))
+    )
+    max_c <- max(c(counts, 1))
+    
+    opacities <- list(
+      "Academia" = max(0.1, counts["Academia"] / max_c),
+      "Sector Público" = max(0.1, counts["Sector Público"] / max_c),
+      "Sociedad Civil" = max(0.1, counts["Sociedad Civil"] / max_c),
+      "Sector Privado" = max(0.1, counts["Sector Privado"] / max_c)
+    )
+    
+    return(list(df = q_df, op = opacities))
   })
   
+  quadrant_obj <- reactive({
+    res <- quadrant_data_reac()
+    req(res)
+    q_df <- res$df
+    op <- res$op
+    
+    bg_shapes <- list(
+      list(type = "rect", x0 = -2, x1 = 0, y0 = 0, y1 = 2, fillcolor = "#F5AD4B", opacity = op[["Sociedad Civil"]]*0.8, layer = "below", line = list(width = 0)),
+      list(type = "rect", x0 = 0, x1 = 2, y0 = 0, y1 = 2, fillcolor = "#B465FA", opacity = op[["Sector Público"]]*0.8, layer = "below", line = list(width = 0)),
+      list(type = "rect", x0 = -2, x1 = 0, y0 = -2, y1 = 0, fillcolor = "#34C3D0", opacity = op[["Academia"]]*0.8, layer = "below", line = list(width = 0)),
+      list(type = "rect", x0 = 0, x1 = 2, y0 = -2, y1 = 0, fillcolor = "#52AEE5", opacity = op[["Sector Privado"]]*0.8, layer = "below", line = list(width = 0))
+    )
+    
+    bg_annotations <- list(
+      list(x = -1, y = 1.8, text = "<b>SOCIEDAD CIVIL</b>", showarrow = FALSE, font = list(size = 18 + font_plus, color = "#222")),
+      list(x = 1, y = 1.8, text = "<b>SECTOR PÚBLICO</b>", showarrow = FALSE, font = list(size = 18 + font_plus, color = "#222")),
+      list(x = -1, y = -1.8, text = "<b>ACADEMIA</b>", showarrow = FALSE, font = list(size = 18 + font_plus, color = "#222")),
+      list(x = 1, y = -1.8, text = "<b>SECTOR PRIVADO</b>", showarrow = FALSE, font = list(size = 18 + font_plus, color = "#222"))
+    )
+    
+    mostrar_textos <- if(!is.null(input$quadrant_show_labels) && !input$quadrant_show_labels) 'markers' else 'markers+text'
+    hover_text <- paste0("<b>", q_df$Actor, "</b><br>Frecuencia: ", q_df$Freq, "<br>Cuadrante(s): ", ifelse(is.na(q_df$Sectores) | q_df$Sectores == "", "Sin Asignar", q_df$Sectores))
+    
+    plot_ly(q_df, x = ~X_jitter, y = ~Y_jitter, type = 'scatter', mode = mostrar_textos,
+            text = ~Actor, hovertext = hover_text, hoverinfo = "text",
+            marker = list(size = ~Freq, sizeref = 0.1, sizemode = 'area', color = "#ffffff", line = list(color = "#333", width = 1)),
+            textposition = "top center", textfont = list(size = 10 + font_plus, color = "#333333")) %>%
+      layout(font = list(size = 13 + font_plus), shapes = bg_shapes, annotations = bg_annotations,
+             xaxis = list(range = c(-2, 2), showgrid = FALSE, zeroline = TRUE, zerolinewidth = 2, zerolinecolor = "#FFF", showticklabels = FALSE, title = ""),
+             yaxis = list(range = c(-2, 2), showgrid = FALSE, zeroline = TRUE, zerolinewidth = 2, zerolinecolor = "#FFF", showticklabels = FALSE, title = ""),
+             plot_bgcolor = "#f8f9fa", margin = list(l=10, r=10, b=10, t=10)) %>% config(displayModeBar = FALSE)
+  })
+  output$quadrant_plot <- renderPlotly({ req(quadrant_obj()) })
+  
+  # 5. Correlación
   corr_data_reac <- reactive({
     df <- viz_data()
     req(input$corr_cols, length(input$corr_cols) >= 1)
@@ -1480,7 +2161,7 @@ server <- function(input, output, session) {
     cor(mat_bin[, vars_validas, drop = FALSE])
   })
   
-  output$corr_plot <- renderPlotly({
+  corr_obj <- reactive({
     R <- corr_data_reac()
     req(R)
     umbral <- input$corr_threshold
@@ -1488,25 +2169,21 @@ server <- function(input, output, session) {
     hover_text <- matrix(NA, nrow = nrow(R), ncol = ncol(R))
     for(i in 1:nrow(R)) {
       for(j in 1:ncol(R)) {
-        hover_text[i, j] <- paste0(
-          "<b>", rownames(R)[i], "</b><br>vs<br><b>", colnames(R)[j], "</b><br><br>",
-          "Correlación (r): <b>", round(R[i, j], 3), "</b>"
-        )
+        hover_text[i, j] <- paste0("<b>", rownames(R)[i], "</b><br>vs<br><b>", colnames(R)[j], "</b><br><br>", "Correlación (r): <b>", round(R[i, j], 3), "</b>")
       }
     }
     
     plot_ly(x = colnames(R), y = rownames(R), z = R, type = "heatmap", zmin = -1, zmax = 1,
             colorscale = list(c(0, "#e74c3c"), c(0.5, "#ffffff"), c(1, "#3498db")), 
             hoverinfo = "text", text = hover_text, showscale = TRUE) %>% 
-      layout(title = list(text = paste("Matriz de Correlación (Filtro |r| >", umbral, ")"), font = list(size = 16)),
-             xaxis = list(tickangle = -45, title = "", tickfont = list(size = 10)),
-             yaxis = list(title = "", tickfont = list(size = 10)), margin = list(b = 150, l = 150, t = 50, r = 50)) %>% 
+      layout(font = list(size = 13 + font_plus), title = list(text = paste("Matriz de Correlación (Filtro |r| >", umbral, ")"), font = list(size = 16 + font_plus)),
+             xaxis = list(tickangle = -45, title = "", tickfont = list(size = 10 + font_plus)),
+             yaxis = list(title = "", tickfont = list(size = 10 + font_plus)), margin = list(b = 150, l = 150, t = 50, r = 50)) %>% 
       config(displayModeBar = FALSE)
   })
+  output$corr_plot <- renderPlotly({ req(corr_obj()) })
   
-  # ====================================================================
-  # MAPA TERRITORIAL AVANZADO (CON INTEGRACIÓN CAPA 0)
-  # ====================================================================
+  # 6. Mapa 
   map_data_reac <- reactive({
     df <- viz_data()
     req("Plan" %in% names(df))
@@ -1600,7 +2277,7 @@ server <- function(input, output, session) {
     }
   })
   
-  output$map_plot <- renderLeaflet({
+  map_obj <- reactive({
     map_res <- map_data_reac()
     req(map_res)
     datos_mapa <- map_res$data
@@ -1633,7 +2310,7 @@ server <- function(input, output, session) {
         mapa_zonas_datos <- mapa_zonas %>% left_join(datos_mapa, by = "zona") %>%
           mutate(
             opacidad = ifelse(is.na(valor_mapa) | valor_mapa == 0, 0.15, 0.85),
-            etiqueta = paste0("<div style='font-size: 14px;'><b>Zona: ", zona, "</b><br><hr style='margin: 4px 0;'>",
+            etiqueta = paste0("<div style='font-size: ", 14 + font_plus, "px;'><b>Zona: ", zona, "</b><br><hr style='margin: 4px 0;'>",
                               "Comunas Activadas: ", comunas_reportan, "<br>Promedio de Medidas: ", round(valor_mapa, 2), "<br>",
                               "Total Comunas en Zona: ", total_comunas, "</div>")
           )
@@ -1642,7 +2319,7 @@ server <- function(input, output, session) {
         mapa_zonas_datos <- mapa_rm %>% select(codigo_comuna, geometry) %>% left_join(datos_mapa, by = "codigo_comuna") %>%
           mutate(
             opacidad = ifelse(is.na(valor_mapa) | valor_mapa == 0, 0.15, 0.85),
-            etiqueta = paste0("<div style='font-size: 14px;'><b>Comuna: ", nombre_comuna, "</b><br><hr style='margin: 4px 0;'>",
+            etiqueta = paste0("<div style='font-size: ", 14 + font_plus, "px;'><b>Comuna: ", nombre_comuna, "</b><br><hr style='margin: 4px 0;'>",
                               "Total de Medidas: ", valor_mapa, "</div>")
           )
         leyenda_titulo <- "Total de<br>Medidas"
@@ -1672,14 +2349,14 @@ server <- function(input, output, session) {
           fillColor = ~color_fill, weight = 1.5, color = "#444444", fillOpacity = ~opacidad,
           highlightOptions = highlightOptions(weight = 3, color = "#000000", bringToFront = TRUE),
           label = ~lapply(etiqueta, HTML), 
-          labelOptions = labelOptions(noHide = etiquetas_visibles, style = list("font-weight" = "normal", padding = "8px", "box-shadow" = "3px 3px rgba(0,0,0,0.25)"), textsize = "13px", direction = "auto")
+          labelOptions = labelOptions(noHide = etiquetas_visibles, style = list("font-weight" = "normal", padding = "8px", "box-shadow" = "3px 3px rgba(0,0,0,0.25)"), textsize = paste0(13 + font_plus, "px"), direction = "auto")
         )
       
       if(length(vals_valid) > 0) {
         l <- l %>% addLegend(pal = paleta, values = trans_val(vals_valid), title = leyenda_titulo, 
                              labFormat = formato_leyenda_limpio, position = "bottomright")
       }
-      l
+      return(l)
       
     } else {
       t <- map_res$var_type
@@ -1734,7 +2411,7 @@ server <- function(input, output, session) {
               !is.na(val_cat) ~ val_cat,
               TRUE ~ "Sin Registro"
             ),
-            etiqueta = paste0("<div style='font-size: 14px;'><b>", nombre_comuna, "</b><br><hr style='margin: 4px 0;'>",
+            etiqueta = paste0("<div style='font-size: ", 14 + font_plus, "px;'><b>", nombre_comuna, "</b><br><hr style='margin: 4px 0;'>",
                               "Variable: ", map_res$var_name, "<br>",
                               "Valor: <b>", val_str, "</b><br><br>",
                               "<i>Total Medidas PACCC: ", cantidad_medidas, "</i></div>")
@@ -1744,7 +2421,7 @@ server <- function(input, output, session) {
         mapa_zonas_datos <- mapa_zonas_datos %>%
           mutate(
             color_fill = unname(pal_cat(val_cat)),
-            etiqueta = paste0("<div style='font-size: 14px;'><b>", nombre_comuna, "</b><br><hr style='margin: 4px 0;'>",
+            etiqueta = paste0("<div style='font-size: ", 14 + font_plus, "px;'><b>", nombre_comuna, "</b><br><hr style='margin: 4px 0;'>",
                               "Estado: <b>", val_cat, "</b><br>",
                               "<i>", ifelse(val_cat == 'Verdadero' | val_cat == 'Falso', val_raw, ''), "</i></div>")
           )
@@ -1755,7 +2432,7 @@ server <- function(input, output, session) {
           fillColor = ~color_fill, weight = 1.5, color = "#444444", fillOpacity = ~opacidad,
           highlightOptions = highlightOptions(weight = 3, color = "#000000", bringToFront = TRUE),
           label = ~lapply(etiqueta, HTML), 
-          labelOptions = labelOptions(noHide = etiquetas_visibles, style = list("font-weight" = "normal", padding = "8px", "box-shadow" = "3px 3px rgba(0,0,0,0.25)"), textsize = "13px", direction = "auto")
+          labelOptions = labelOptions(noHide = etiquetas_visibles, style = list("font-weight" = "normal", padding = "8px", "box-shadow" = "3px 3px rgba(0,0,0,0.25)"), textsize = paste0(13 + font_plus, "px"), direction = "auto")
         )
       
       if(t %in% c("Número", "Dinero", "Lista")) {
@@ -1764,12 +2441,142 @@ server <- function(input, output, session) {
       } else {
         l <- l %>% addLegend(colors = c("#2ecc71", "#e74c3c", "#bdc3c7"), labels = c("Verdadero (Con Dato)", "Falso (No / 0)", "Sin Información"), title = "Estado", position = "bottomright")
       }
-      l
+      return(l)
+    }
+  })
+  output$map_plot <- renderLeaflet({ req(map_obj()) })
+  
+  # ====================================================================
+  # 7. BOXPLOT TERRITORIAL
+  # ====================================================================
+  boxplot_data_reac <- reactive({
+    df <- viz_data()
+    req("Plan" %in% names(df))
+    
+    df_info <- info_gral_data()
+    dict_info <- info_gral_dict()
+    var_y <- input$boxplot_y
+    if(is.null(var_y)) var_y <- "medidas"
+    
+    normalizar <- function(x) { tolower(chartr("áéíóúüñÁÉÍÓÚÜÑ", "aeiouunAEIOUUN", trimws(x))) }
+    
+    df_counts <- df %>% count(Plan, name = "cantidad_medidas") %>% mutate(Plan_norm = normalizar(Plan))
+    df_info_norm <- df_info %>% mutate(Plan_norm = normalizar(Plan))
+    
+    base_calc <- zonas_rm %>%
+      mutate(nombre_norm = normalizar(nombre_comuna)) %>%
+      left_join(df_counts, by = c("nombre_norm" = "Plan_norm")) %>%
+      left_join(df_info_norm, by = c("nombre_norm" = "Plan_norm")) %>%
+      mutate(cantidad_medidas = ifelse(is.na(cantidad_medidas), 0, as.numeric(cantidad_medidas)))
+    
+    if (var_y == "medidas") {
+      return(base_calc %>% select(Zona = zona, Comuna = nombre_comuna, Valor = cantidad_medidas))
+    } else {
+      t <- dict_info$Tipo[dict_info$Columna == var_y]
+      t <- if(length(t) > 0) t[1] else "Texto"
+      
+      if (t %in% c("Número", "Dinero", "Lista")) {
+        base_df <- base_calc %>% mutate(val_raw = as.character(!!sym(var_y)))
+        if (t %in% c("Número", "Dinero")) {
+          base_df <- base_df %>% mutate(
+            val_limpio = trimws(val_raw),
+            val_str = gsub("[\\$\\s]", "", val_limpio),
+            val_str = gsub("\\.", "", val_str),
+            val_str = gsub(",", ".", val_str),
+            Valor = suppressWarnings(as.numeric(val_str))
+          )
+        } else if (t == "Lista") {
+          base_df <- base_df %>% mutate(
+            Valor = ifelse(is.na(val_raw) | val_raw == "", NA_real_, stringr::str_count(val_raw, ";") + 1)
+          )
+        }
+        return(base_df %>% select(Zona = zona, Comuna = nombre_comuna, Valor))
+      } else {
+        return(NULL)
+      }
     }
   })
   
+  boxplot_obj <- reactive({
+    b_df <- boxplot_data_reac()
+    req(b_df)
+    b_df <- b_df %>% filter(!is.na(Valor))
+    if(nrow(b_df) == 0) return(NULL)
+    
+    b_df$Zona <- factor(b_df$Zona, levels = b_df %>% group_by(Zona) %>% summarise(med = median(Valor, na.rm=T)) %>% arrange(desc(med)) %>% pull(Zona))
+    
+    p <- plot_ly(b_df, x = ~Zona, y = ~Valor, color = ~Zona, type = "box",
+                 text = ~Comuna, hoverinfo = "y+text",
+                 boxpoints = if(!is.null(input$boxplot_points) && input$boxplot_points) "all" else "outliers",
+                 jitter = 0.5, pointpos = -1.8) %>%
+      layout(font = list(size = 13 + font_plus), title = list(text = paste("Distribución de", input$boxplot_y, "por Zona Territorial"), font=list(size=17 + font_plus)),
+             xaxis = list(title = "", tickangle = -45),
+             yaxis = list(title = input$boxplot_y, zeroline = FALSE),
+             showlegend = FALSE,
+             plot_bgcolor = "#f8f9fa",
+             margin = list(b = 100)) %>% 
+      config(displayModeBar = FALSE)
+    return(p)
+  })
+  
+  output$boxplot_plot <- renderPlotly({ req(boxplot_obj()) })
+  
   # ====================================================================
-  # EXPORTACIÓN EXCEL Y PNG
+  # CAPA 4: TABLA DE METODOLOGÍAS Y REFERENCIAS DE PAQUETES
+  # ====================================================================
+  metodologia_df <- reactive({ construir_tabla_metodologias() })
+  referencias_df <- reactive({ construir_tabla_referencias() })
+  
+  output$metodologia_table <- renderDT({
+    datatable(
+      metodologia_df(),
+      colnames = c("Capa / Módulo", "Metodología y Criterios de Cálculo", "Paquetes Utilizados (Cita)"),
+      rownames = FALSE,
+      options = list(pageLength = 15, scrollX = TRUE, autoWidth = TRUE)
+    )
+  })
+  
+  output$referencias_paquetes_table <- renderDT({
+    datatable(
+      referencias_df(),
+      colnames = c("Paquete", "Versión", "Rol en la Aplicación", "Cita Corta", "Referencia Bibliográfica Completa"),
+      rownames = FALSE,
+      options = list(pageLength = 25, scrollX = TRUE, autoWidth = TRUE)
+    )
+  })
+  
+  output$dl_metodologia_excel <- downloadHandler(
+    filename = function() { paste0("Metodologia_y_Citas_PACCC_", Sys.Date(), ".xlsx") },
+    content = function(file) {
+      writexl::write_xlsx(
+        list(
+          "Tabla_Metodologias" = metodologia_df(),
+          "Referencias_Paquetes" = referencias_df()
+        ),
+        path = file
+      )
+    }
+  )
+  
+  output$dl_referencias_bib <- downloadHandler(
+    filename = function() { paste0("referencias_paquetes_PACCC_", Sys.Date(), ".bib") },
+    content = function(file) {
+      pkgs <- c("base", paquetes_requeridos)
+      bloques_bib <- lapply(pkgs, function(pkg) {
+        tryCatch({
+          cit <- if (pkg == "base") citation() else citation(pkg)
+          paste0("% --- ", ifelse(pkg == "base", "R (base)", pkg), " ---\n",
+                 paste(toBibtex(cit), collapse = "\n"))
+        }, error = function(e) {
+          paste0("% No se pudo generar BibTeX para: ", pkg)
+        })
+      })
+      writeLines(unlist(bloques_bib), con = file, useBytes = TRUE)
+    }
+  )
+  
+  # ====================================================================
+  # EXPORTACIÓN EXCEL Y PNG (SISTEMA DE RESOLUCIÓN DINÁMICA)
   # ====================================================================
   output$dl_data_excel <- downloadHandler(
     filename = function() { paste0("Exportacion_Datos_", input$viz_mode, "_", Sys.Date(), ".xlsx") },
@@ -1781,6 +2588,8 @@ server <- function(input, output, session) {
                                   "sankey" = sankey_data_reac(),
                                   "network" = network_data_reac(),
                                   "map" = map_data_reac()$data,
+                                  "quadrants" = quadrant_data_reac()$df,
+                                  "boxplot" = boxplot_data_reac(),
                                   "corrmatrix" = {
                                     r_mat <- corr_data_reac()
                                     if(!is.null(r_mat)) { cbind(Variable = rownames(as.data.frame(r_mat)), as.data.frame(r_mat)) } else NULL
@@ -1794,36 +2603,74 @@ server <- function(input, output, session) {
     }
   )
   
-  generar_png_desde_html <- function(widget_obj, file_path) {
+  generar_png_desde_html <- function(widget_obj, file_path, w = 1200, h = 800, z = 2, d = 2.0) {
     req(widget_obj)
     temp_html <- tempfile(fileext = ".html")
-    htmlwidgets::saveWidget(widget_obj, temp_html, selfcontained = TRUE)
-    webshot2::webshot(temp_html, file = file_path, delay = 1.5, vwidth = 1200, vheight = 800)
+    
+    widget_con_css <- htmlwidgets::prependContent(
+      widget_obj, 
+      htmltools::tags$style(htmltools::HTML("body, .leaflet-container { background-color: #ffffff !important; margin: 0; padding: 0; }"))
+    )
+    
+    htmlwidgets::saveWidget(widget_con_css, temp_html, selfcontained = TRUE, background = "white")
+    webshot2::webshot(temp_html, file = file_path, delay = d, vwidth = w, vheight = h, zoom = z)
   }
   
   output$dl_nlp <- downloadHandler(
     filename = function() { paste0("NubePalabras_", input$nlp_type, ".png") },
     content = function(file) {
       if(input$nlp_type == "global") {
-        widget_obj <- wordcloud2(head(wc_global_data_reac()[, c("word", "freq")], 100), size = 0.6) 
+        freqs <- wc_global_data_reac()
+        req(freqs, nrow(freqs) > 0)
+        widget_obj <- wordcloud2(head(freqs[, c("word", "freq")], 100), size = 0.7 + (font_plus * 0.05)) 
       } else {
-        widget_obj <- wordcloud2(head(wc_unique_data_reac()[, c("word", "freq")], 80), size = 0.6, color = "random-light", backgroundColor = "#2c3e50")
+        freqs <- wc_unique_data_reac()
+        req(freqs, nrow(freqs) > 0)
+        widget_obj <- wordcloud2(head(freqs[, c("word", "freq")], 80), size = 0.7 + (font_plus * 0.05), color = "random-light", backgroundColor = "#2c3e50")
       }
       generar_png_desde_html(widget_obj, file) 
     }
   )
   
-  observe({
-    df <- viz_data(); req(input$unique_group_col %in% names(df))
-    opciones <- unique(na.omit(df[[input$unique_group_col]]))
-    updateSelectInput(session, "unique_group_val", choices = opciones)
-  })
+  output$dl_sankey <- downloadHandler(
+    filename = function() { "sankey_dinamico.png" }, 
+    content = function(file) { generar_png_desde_html(sankey_obj(), file) }
+  )
   
-  output$dl_sankey <- downloadHandler(filename = function() { "sankey_dinamico.png" }, content = function(file) { })
-  output$dl_freq <- downloadHandler(filename = function() { "distribucion_frecuencias.png" }, content = function(file) { })
-  output$dl_network <- downloadHandler(filename = function() { "red_colaboradores.png" }, content = function(file) { })
-  output$dl_corr <- downloadHandler(filename = function() { paste0("correlograma_", Sys.Date(), ".png") }, content = function(file) { })
-  output$dl_map <- downloadHandler(filename = function() { paste0("mapa_territorial_", Sys.Date(), ".png") }, content = function(file) { })
+  output$dl_freq <- downloadHandler(
+    filename = function() { "distribucion_frecuencias.png" }, 
+    content = function(file) { generar_png_desde_html(freq_obj(), file) }
+  )
+  
+  output$dl_network <- downloadHandler(
+    filename = function() { "red_colaboradores.png" }, 
+    content = function(file) { 
+      generar_png_desde_html(network_obj(), file, w = 800, h = 800, z = 4, d = 3.5) 
+    }
+  )
+  
+  output$dl_quadrant <- downloadHandler(
+    filename = function() { "cuadrantes_actores.png" }, 
+    content = function(file) { generar_png_desde_html(quadrant_obj(), file) }
+  )
+  
+  output$dl_corr <- downloadHandler(
+    filename = function() { paste0("correlograma_", Sys.Date(), ".png") }, 
+    content = function(file) { generar_png_desde_html(corr_obj(), file) }
+  )
+  
+  output$dl_map <- downloadHandler(
+    filename = function() { paste0("mapa_territorial_", Sys.Date(), ".png") }, 
+    content = function(file) { 
+      showNotification("Generando imagen del mapa, por favor espera un momento...", type = "message", duration = 3)
+      generar_png_desde_html(map_obj(), file, w = 1000, h = 900, z = 3, d = 3.0) 
+    }
+  )
+  
+  output$dl_boxplot <- downloadHandler(
+    filename = function() { paste0("boxplot_territorial_", Sys.Date(), ".png") }, 
+    content = function(file) { generar_png_desde_html(boxplot_obj(), file) }
+  )
 }
 
 shinyApp(ui = ui, server = server)
